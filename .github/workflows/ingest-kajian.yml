@@ -17,7 +17,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Check ingestion secrets
+        id: credentials
+        env:
+          YOUTUBE_DATA_API_KEY: ${{ secrets.YOUTUBE_DATA_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          if [[ -z "$YOUTUBE_DATA_API_KEY" || -z "$SUPABASE_URL" || -z "$SUPABASE_SECRET_KEY" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Ingestion skipped; configure the three repository Actions secrets first."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Ingest videos for editorial review
+        if: steps.credentials.outputs.configured == 'true'
         env:
           YOUTUBE_DATA_API_KEY: ${{ secrets.YOUTUBE_DATA_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
