@@ -1,9 +1,18 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
-from ingest_kajian_catalog import Source, ingest_rows, load_sources, parse_duration
+from ingest_kajian_catalog import (
+    Source,
+    YouTubeDataClient,
+    calculate_next_run,
+    ingest_rows,
+    load_sources,
+    parse_duration,
+    should_run,
+)
 
 
 class KajianCatalogIngestionTest(unittest.TestCase):
@@ -79,6 +88,45 @@ class KajianCatalogIngestionTest(unittest.TestCase):
         self.assertEqual(rows[0]["category"], "Muamalah")
         self.assertEqual(rows[0]["review_status"], "approved")
         self.assertEqual(rows[0]["reviewed_at"], "2026-10-13T00:00:00+00:00")
+
+    def test_calculate_next_run_interval(self):
+        fixed_time = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        settings = {"schedule_mode": "interval", "interval_minutes": 60}
+        next_run = calculate_next_run(settings, current_time=fixed_time)
+        self.assertEqual(next_run, "2026-10-15T13:00:00+00:00")
+
+    def test_calculate_next_run_daily_asia_jakarta(self):
+        # 12:00 UTC is 19:00 WIB. Daily time is 00:00 WIB (which is 17:00 UTC).
+        # Since 19:00 WIB > 00:00 WIB, next run is tomorrow at 00:00 WIB = 17:00 UTC today.
+        fixed_time = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        settings = {"schedule_mode": "daily", "daily_time": "00:00"}
+        next_run = calculate_next_run(settings, current_time=fixed_time)
+        self.assertEqual(next_run, "2026-10-15T17:00:00+00:00")
+
+    def test_should_run_manual_trigger_takes_precedence(self):
+        settings = {
+            "run_requested_at": "2026-10-15T10:00:00Z",
+            "next_run_at": "2026-10-15T23:59:59Z",
+        }
+        is_due, trigger = should_run(settings)
+        self.assertTrue(is_due)
+        self.assertEqual(trigger, "manual")
+
+    def test_should_run_skips_when_next_run_is_in_future(self):
+        settings = {
+            "run_requested_at": None,
+            "next_run_at": "2099-01-01T00:00:00+00:00",
+        }
+        is_due, trigger = should_run(settings)
+        self.assertFalse(is_due)
+        self.assertEqual(trigger, "none")
+
+    def test_resolve_channel_uploads_shortcut(self):
+        client = YouTubeDataClient("fake_key")
+        # Direct channel ID UCxxx maps to UUxxx
+        channel_id = "UC1234567890123456789012"
+        uploads = client.resolve_channel_uploads_playlist(channel_id)
+        self.assertEqual(uploads, "UU1234567890123456789012")
 
 
 if __name__ == "__main__":

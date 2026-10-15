@@ -2,8 +2,8 @@ name: Ingest approved-source YouTube catalog
 
 on:
   schedule:
-    # 00:00 Asia/Jakarta (GitHub Actions schedule uses UTC).
-    - cron: "0 17 * * *"
+    # Polling every 15 minutes (UTC). Note that GitHub Actions execution can be delayed by GitHub queue.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -36,4 +36,5 @@ jobs:
           YOUTUBE_DATA_API_KEY: ${{ secrets.YOUTUBE_DATA_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: python tools/ingest_kajian_catalog.py

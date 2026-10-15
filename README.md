@@ -51,18 +51,11 @@ dailySunnahSupabasePublishableKey=YOUR_SUPABASE_PUBLISHABLE_KEY
 
 The app sends the publishable key in the `apikey` header. RLS allows clients to read approved rows only. Never put a Supabase secret key in the Android app.
 
-The scheduled ingestion job reads `config/kajian-sources.json`. Current seed sources are Muhammad Nuzul Dzikri's **Riyaadhus Shaalihiin | BAB 51** playlist (kajian) and **VIDEO PENDEK RAMADHAN 1445H** (Shorts). The Shorts playlist currently contains 14 videos published about two years ago, so it is only an initial catalog sample; replace it with a current Shorts playlist when one is selected. The initial category is a provisional editorial bucket. Every new row is imported as `pending` and stays out of the app until an editor verifies its category and content, then approves it in Supabase.
+The scheduled ingestion job is configured in `.github/workflows/ingest-kajian.yml` and polls every 15 minutes. It reads active sources dynamically from Supabase (`kajian_sources`), falling back to `config/kajian-sources.json` if the table is empty or unmigrated. Supported sources include YouTube Playlists (playlist ID) and Channels (channel ID or handle, such as `@MuhammadNuzulDzikri`). The worker resolves channel handles to their official YouTube uploads playlist without guessing IDs.
 
-Add one object per editorial playlist, with an explicit category and content type. `short` is an editorial decision, not inferred from duration:
+Ingestion respects the schedule configured in `kajian_ingestion_settings` (daily at a specified Asia/Jakarta time or recurring minute intervals) and immediately processes manual "Cek sekarang" requests triggered from the admin panel. Concurrency locks prevent duplicate simultaneous runs, and each execution logs its progress and status to `kajian_ingestion_runs`.
 
-```json
-[
-  { "playlist_id": "YOUTUBE_PLAYLIST_ID", "category": "Fiqih", "content_type": "kajian" },
-  { "playlist_id": "YOUTUBE_SHORTS_PLAYLIST_ID", "category": "Akidah", "content_type": "short" }
-]
-```
-
-Set GitHub Actions secrets `YOUTUBE_DATA_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SECRET_KEY`. The daily workflow imports new videos as `pending`, refreshes stored YouTube metadata, and removes unavailable/non-embeddable videos. An editor must set `review_status=approved` before a row enters the app feed. Test the importer with `python3 -B -m unittest discover -s tools -p 'test_*.py'`.
+Set GitHub Actions secrets `YOUTUBE_DATA_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SECRET_KEY`. The workflow imports new videos as `pending`, refreshes stored YouTube metadata, and removes unavailable/non-embeddable videos while preserving existing editorial decisions and review statuses. An editor must set `review_status=approved` in the admin panel before a video appears in the app feed. Test the importer with `python3 -B -m unittest discover -s tools -p 'test_*.py'`.
 
 The generated `app/src/main/assets/quran/surah-page-index.json` records the minimum page containing a verse box for each surah in CDN layout v1. Regenerate it with:
 
