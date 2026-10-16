@@ -77,6 +77,7 @@ export async function saveSourceAction(formData: FormData) {
     display_name: string;
     category: string;
     content_type: string;
+    initial_review_status: string;
     is_active: boolean;
   };
 
@@ -88,12 +89,17 @@ export async function saveSourceAction(formData: FormData) {
     const contentType = field(formData, "content_type");
     validateClassification(category, contentType);
     const displayName = field(formData, "display_name") || sourceIdentifier;
+    const initialReviewStatus = field(formData, "initial_review_status") || "pending";
+    if (!["pending", "approved"].includes(initialReviewStatus)) {
+      throw new Error("Status awal video tidak valid.");
+    }
     values = {
       source_kind: kind,
       source_identifier: sourceIdentifier,
       display_name: displayName,
       category,
       content_type: contentType,
+      initial_review_status: initialReviewStatus,
       is_active: field(formData, "is_active") === "on",
     };
   } catch (error) {
@@ -144,6 +150,11 @@ export async function saveIngestionSettingsAction(formData: FormData) {
     settingsRedirect("error", "Interval harus 15 menit sampai 30 hari.");
   }
 
+  const defaultReviewStatus = field(formData, "default_review_status") || "pending";
+  if (!["pending", "approved"].includes(defaultReviewStatus)) {
+    settingsRedirect("error", "Status review default tidak valid.");
+  }
+
   const nextRunAt = mode === "interval"
     ? new Date(Date.now() + intervalMinutes * 60_000).toISOString()
     : nextDailyRun(dailyTime);
@@ -153,6 +164,7 @@ export async function saveIngestionSettingsAction(formData: FormData) {
     interval_minutes: mode === "interval" ? intervalMinutes : null,
     daily_time: dailyTime,
     timezone: "Asia/Jakarta",
+    default_review_status: defaultReviewStatus,
     next_run_at: nextRunAt,
   }).eq("id", "default");
   if (error) settingsRedirect("error", error.message);

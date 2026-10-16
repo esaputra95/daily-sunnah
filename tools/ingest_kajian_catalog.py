@@ -35,6 +35,7 @@ class Source:
         source_kind: str = "playlist",
         display_name: str = "",
         is_active: bool = True,
+        initial_review_status: str = "pending",
     ):
         self.source_identifier = source_identifier.strip()
         self.category = category.strip()
@@ -42,6 +43,7 @@ class Source:
         self.source_kind = source_kind.strip().lower()
         self.display_name = display_name.strip() or self.source_identifier
         self.is_active = is_active
+        self.initial_review_status = initial_review_status.strip().lower() or "pending"
 
     @property
     def playlist_id(self) -> str:
@@ -56,13 +58,14 @@ class Source:
             and self.content_type == other.content_type
             and self.source_kind == other.source_kind
             and self.is_active == other.is_active
+            and self.initial_review_status == other.initial_review_status
         )
 
     def __hash__(self) -> int:
-        return hash((self.source_kind, self.source_identifier, self.category, self.content_type, self.is_active))
+        return hash((self.source_kind, self.source_identifier, self.category, self.content_type, self.is_active, self.initial_review_status))
 
     def __repr__(self) -> str:
-        return f"Source({self.source_kind}:{self.source_identifier}, category={self.category}, type={self.content_type})"
+        return f"Source({self.source_kind}:{self.source_identifier}, category={self.category}, type={self.content_type}, status={self.initial_review_status})"
 
 
 def parse_duration(value: str) -> int:
@@ -90,6 +93,7 @@ def load_sources(path: Path = SOURCE_FILE) -> list[Source]:
         content_type = str(item.get("content_type", "")).strip().lower()
         display_name = str(item.get("display_name", "")).strip()
         is_active = bool(item.get("is_active", True))
+        initial_review_status = str(item.get("initial_review_status", "pending")).strip().lower()
         if not playlist_id:
             raise ValueError("Every source needs playlist_id or source_identifier")
         if category not in VALID_CATEGORIES:
@@ -107,6 +111,7 @@ def load_sources(path: Path = SOURCE_FILE) -> list[Source]:
             source_kind=kind,
             display_name=display_name or playlist_id,
             is_active=is_active,
+            initial_review_status=initial_review_status,
         ))
     return sources
 
@@ -283,6 +288,7 @@ class SupabaseClient:
                 cat = str(item.get("category", "")).strip()
                 ctype = str(item.get("content_type", "")).strip().lower()
                 display = str(item.get("display_name", "")).strip()
+                init_status = str(item.get("initial_review_status", "pending")).strip().lower()
                 if not ident or cat not in VALID_CATEGORIES or ctype not in VALID_CONTENT_TYPES:
                     continue
                 key = (kind, ident)
@@ -296,6 +302,7 @@ class SupabaseClient:
                     source_kind=kind,
                     display_name=display or ident,
                     is_active=True,
+                    initial_review_status=init_status,
                 ))
             return sources
         except Exception:
@@ -405,6 +412,7 @@ def ingest_rows(
     videos: dict[str, dict[str, Any]],
     source_by_video: dict[str, Source],
     existing_records: dict[str, dict[str, Any]],
+    default_review_status: str = "pending",
 ) -> tuple[list[dict[str, Any]], list[str]]:
     rows: list[dict[str, Any]] = []
     unavailable: list[str] = []
@@ -446,8 +454,12 @@ def ingest_rows(
         elif source:
             row["category"] = source.category
             row["content_type"] = source.content_type
-            row["review_status"] = "pending"
-            row["reviewed_at"] = None
+            is_auto_approved = (
+                source.initial_review_status == "approved"
+                or default_review_status == "approved"
+            )
+            row["review_status"] = "approved" if is_auto_approved else "pending"
+            row["reviewed_at"] = datetime.now(timezone.utc).isoformat() if is_auto_approved else None
         rows.append(row)
     return rows, unavailable
 
@@ -519,8 +531,14 @@ def run(force: bool = False) -> int:
             supabase.update_settings(run_start_utc.isoformat(), next_run_at)
             return 0
 
+        default_review_status = str(settings.get("default_review_status", "pending")).strip().lower() if settings else "pending"
         youtube_metadata = youtube.videos(all_ids)
-        rows, unavailable = ingest_rows(youtube_metadata, source_by_video, existing_records)
+        rows, unavailable = ingest_rows(
+            youtube_metadata,
+            source_by_video,
+            existing_records,
+            default_review_status=default_review_status,
+        )
         supabase.upsert(rows)
         for video_id in set(all_ids) - set(youtube_metadata):
             unavailable.append(video_id)

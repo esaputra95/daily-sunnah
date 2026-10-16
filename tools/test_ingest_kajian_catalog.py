@@ -47,12 +47,54 @@ class KajianCatalogIngestionTest(unittest.TestCase):
             },
             {video_id: Source("PL1", "Fiqih", "kajian")},
             {},
+            default_review_status="pending",
         )
         self.assertEqual(unavailable, [])
         self.assertEqual(rows[0]["category"], "Fiqih")
         self.assertEqual(rows[0]["content_type"], "kajian")
         self.assertEqual(rows[0]["review_status"], "pending")
+        self.assertIsNone(rows[0]["reviewed_at"])
         self.assertEqual(rows[0]["duration_seconds"], 2_700)
+
+    def test_new_candidates_can_be_auto_approved_via_global_setting(self):
+        video_id = "autoappr123"
+        rows, _ = ingest_rows(
+            {
+                video_id: {
+                    "snippet": {
+                        "title": "Kajian Baru", "description": "", "channelTitle": "Channel", "channelId": "UC1",
+                        "publishedAt": "2026-10-14T00:00:00Z", "thumbnails": {"high": {"url": "https://i.ytimg.com/x.jpg"}},
+                    },
+                    "contentDetails": {"duration": "PT10M"},
+                    "status": {"privacyStatus": "public", "embeddable": True},
+                }
+            },
+            {video_id: Source("PL1", "Akidah", "kajian")},
+            {},
+            default_review_status="approved",
+        )
+        self.assertEqual(rows[0]["review_status"], "approved")
+        self.assertIsNotNone(rows[0]["reviewed_at"])
+
+    def test_new_candidates_can_be_auto_approved_via_source_setting(self):
+        video_id = "sourceappr1"
+        rows, _ = ingest_rows(
+            {
+                video_id: {
+                    "snippet": {
+                        "title": "Kajian Short", "description": "", "channelTitle": "Channel", "channelId": "UC1",
+                        "publishedAt": "2026-10-14T00:00:00Z", "thumbnails": {"high": {"url": "https://i.ytimg.com/x.jpg"}},
+                    },
+                    "contentDetails": {"duration": "PT50S"},
+                    "status": {"privacyStatus": "public", "embeddable": True},
+                }
+            },
+            {video_id: Source("PL1", "Sirah", "short", initial_review_status="approved")},
+            {},
+            default_review_status="pending",
+        )
+        self.assertEqual(rows[0]["review_status"], "approved")
+        self.assertIsNotNone(rows[0]["reviewed_at"])
 
     def test_excludes_private_and_non_embeddable_videos(self):
         rows, unavailable = ingest_rows(

@@ -22,6 +22,7 @@ export interface KajianSource {
   display_name: string;
   category: KajianCategory;
   content_type: KajianContentType;
+  initial_review_status?: ReviewStatus;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -33,6 +34,7 @@ export interface KajianIngestionSettings {
   interval_minutes: number | null;
   daily_time: string;
   timezone: string;
+  default_review_status?: ReviewStatus;
   last_run_at: string | null;
   next_run_at: string;
   run_requested_at: string | null;

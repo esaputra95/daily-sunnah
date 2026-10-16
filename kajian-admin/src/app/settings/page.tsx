@@ -102,6 +102,13 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                 {VALID_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
               </select>
             </div>
+            <div>
+              <label className={labelClass} htmlFor="new-source-status">Status awal</label>
+              <select id="new-source-status" name="initial_review_status" className={inputClass} defaultValue="pending">
+                <option value="pending">Pending</option>
+                <option value="approved">Auto Approve</option>
+              </select>
+            </div>
             <div className="flex items-end gap-3">
               <div className="min-w-0 flex-1">
                 <label className={labelClass} htmlFor="new-source-type">Jenis default</label>
@@ -118,7 +125,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
             {sources.length === 0 && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Belum ada sumber terdaftar.</p>}
             {sources.map((source) => (
               <div key={source.id} className="rounded-xl border border-slate-200 p-4">
-                <form action={saveSourceAction} className="grid gap-3 md:grid-cols-6">
+                <form action={saveSourceAction} className="grid gap-3 md:grid-cols-7">
                   <input type="hidden" name="id" value={source.id} />
                   <div>
                     <label className={labelClass}>Tipe</label>
@@ -140,9 +147,16 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                       {VALID_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
                     </select>
                   </div>
+                  <div>
+                    <label className={labelClass}>Status awal</label>
+                    <select name="initial_review_status" className={inputClass} defaultValue={source.initial_review_status ?? "pending"}>
+                      <option value="pending">Pending</option>
+                      <option value="approved">Auto Approve</option>
+                    </select>
+                  </div>
                   <div className="flex items-end gap-2">
                     <div className="min-w-0 flex-1">
-                      <label className={labelClass}>Jenis default</label>
+                      <label className={labelClass}>Jenis</label>
                       <select name="content_type" className={inputClass} defaultValue={source.content_type}>
                         {VALID_CONTENT_TYPES.map((type) => <option key={type} value={type}>{type === "kajian" ? "Kajian" : "Short"}</option>)}
                       </select>
@@ -193,14 +207,39 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                   <option value="1440">Setiap 24 jam</option>
                 </select>
               </div>
+
+              {/* Pengaturan Status Review Video Baru */}
+              <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 p-3.5 space-y-1.5">
+                <label className={labelClass} htmlFor="default-review-status">
+                  Status Review Video Baru dari YouTube
+                </label>
+                <select
+                  id="default-review-status"
+                  name="default_review_status"
+                  className={inputClass}
+                  defaultValue={ingestion?.default_review_status ?? "pending"}
+                >
+                  <option value="pending">
+                    Butuh Review Editor (Pending) — Aman, tinjau & approve manual
+                  </option>
+                  <option value="approved">
+                    Otomatis Disetujui (Auto Approve) — Langsung tampil di Android
+                  </option>
+                </select>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Jika dipilih <strong>Auto Approve</strong>, seluruh video baru hasil penarikan YouTube otomatis disetujui dan langsung tayang di aplikasi Android Daily Sunnah.
+                </p>
+              </div>
+
               <p className="text-xs text-slate-500">Zona waktu tetap Asia/Jakarta. Jadwal harian saat ini: {ingestion?.daily_time?.slice(0, 5) ?? "00:00"} WIB.</p>
-              <button className={buttonClass}><Settings2 className="h-4 w-4" /> Simpan jadwal</button>
+              <button className={buttonClass}><Settings2 className="h-4 w-4" /> Simpan jadwal & status</button>
             </form>
             <div className="mt-6 border-t border-slate-100 pt-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs leading-5 text-slate-600">
                   <div>Run terakhir: <span className="font-semibold text-slate-800">{formatDateTime(ingestion?.last_run_at)}</span></div>
                   <div>Perkiraan berikutnya: <span className="font-semibold text-slate-800">{formatDateTime(ingestion?.next_run_at)}</span></div>
+                  <div>Status video baru: <span className={`font-semibold ${ingestion?.default_review_status === "approved" ? "text-emerald-700" : "text-amber-700"}`}>{ingestion?.default_review_status === "approved" ? "Auto Approve" : "Pending Review"}</span></div>
                   {ingestion?.run_requested_at && <div className="mt-1 font-semibold text-amber-700">Permintaan manual sedang menunggu poller.</div>}
                 </div>
                 <form action={requestIngestionNowAction}>
