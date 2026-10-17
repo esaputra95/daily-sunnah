@@ -9,6 +9,7 @@ from ingest_kajian_catalog import (
     Source,
     YouTubeDataClient,
     calculate_next_run,
+    classify_content_type,
     ingest_rows,
     load_sources,
     parse_duration,
@@ -191,7 +192,57 @@ class KajianCatalogIngestionTest(unittest.TestCase):
             mock_fetch.assert_called_once_with("PL1", max_items=3)
             self.assertEqual(res, ["vid1", "vid2", "vid3"])
 
+    def test_classify_content_type_duration_rule(self):
+        # >= 5 menit (300 detik) adalah kajian
+        self.assertEqual(classify_content_type(300), "kajian")
+        self.assertEqual(classify_content_type(1800), "kajian")
+        self.assertEqual(classify_content_type(301), "kajian")
+
+        # < 5 menit (300 detik) adalah short
+        self.assertEqual(classify_content_type(299), "short")
+        self.assertEqual(classify_content_type(60), "short")
+        self.assertEqual(classify_content_type(0), "short")
+
+    def test_ingest_rows_classifies_short_if_under_5_minutes(self):
+        video_id = "shortvid123"
+        rows, _ = ingest_rows(
+            {
+                video_id: {
+                    "snippet": {
+                        "title": "Short Faedah", "description": "", "channelTitle": "Channel", "channelId": "UC1",
+                        "publishedAt": "2026-10-14T00:00:00Z", "thumbnails": {"high": {"url": "https://i.ytimg.com/x.jpg"}},
+                    },
+                    "contentDetails": {"duration": "PT2M30S"},  # 150 seconds < 300 seconds
+                    "status": {"privacyStatus": "public", "embeddable": True},
+                }
+            },
+            {video_id: Source("PL1", "Sirah", "kajian")},  # source had "kajian" default, but duration is 2.5m
+            {},
+        )
+        self.assertEqual(rows[0]["content_type"], "short")
+        self.assertEqual(rows[0]["duration_seconds"], 150)
+
+    def test_ingest_rows_classifies_kajian_if_5_minutes_or_more(self):
+        video_id = "kajianvid123"
+        rows, _ = ingest_rows(
+            {
+                video_id: {
+                    "snippet": {
+                        "title": "Kajian Panjang", "description": "", "channelTitle": "Channel", "channelId": "UC1",
+                        "publishedAt": "2026-10-14T00:00:00Z", "thumbnails": {"high": {"url": "https://i.ytimg.com/x.jpg"}},
+                    },
+                    "contentDetails": {"duration": "PT5M1S"},  # 301 seconds >= 300 seconds
+                    "status": {"privacyStatus": "public", "embeddable": True},
+                }
+            },
+            {video_id: Source("PL1", "Sirah", "short")},  # source had "short" default, but duration is > 5m
+            {},
+        )
+        self.assertEqual(rows[0]["content_type"], "kajian")
+        self.assertEqual(rows[0]["duration_seconds"], 301)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

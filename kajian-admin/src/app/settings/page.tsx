@@ -203,7 +203,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
               </div>
             ))}
           </div>
-          <p className="mt-4 text-xs leading-5 text-slate-500">Tipe `Short` tidak ditebak dari durasi. Nilai default mengikuti sumber; editor dapat mengubah klasifikasi per video sebelum menyetujui.</p>
+          <p className="mt-4 text-xs leading-5 text-slate-500">Aturan dasar kurasi: Video berdurasi &ge; 5 menit otomatis masuk sebagai <strong>Kajian</strong>, sedangkan &lt; 5 menit masuk sebagai <strong>Short</strong>. Editor tetap memiliki kendali penuh untuk mengubah jenis per-video di halaman katalog.</p>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">

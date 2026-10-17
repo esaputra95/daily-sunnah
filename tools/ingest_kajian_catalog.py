@@ -420,6 +420,11 @@ class SupabaseClient:
         self.request("DELETE", url, prefer="return=minimal")
 
 
+def classify_content_type(duration_seconds: int) -> str:
+    """Aturan dasar kurasi: jika video >= 5 menit (300 detik) maka 'kajian', jika < 5 menit maka 'short'."""
+    return "kajian" if duration_seconds >= 300 else "short"
+
+
 def ingest_rows(
     videos: dict[str, dict[str, Any]],
     source_by_video: dict[str, Source],
@@ -465,13 +470,16 @@ def ingest_rows(
             })
         elif source:
             row["category"] = source.category
-            row["content_type"] = source.content_type
+            row["content_type"] = classify_content_type(row["duration_seconds"])
             is_auto_approved = (
                 source.initial_review_status == "approved"
                 or default_review_status == "approved"
             )
             row["review_status"] = "approved" if is_auto_approved else "pending"
             row["reviewed_at"] = datetime.now(timezone.utc).isoformat() if is_auto_approved else None
+        else:
+            row["content_type"] = classify_content_type(row["duration_seconds"])
+            row["review_status"] = default_review_status
         rows.append(row)
     return rows, unavailable
 
