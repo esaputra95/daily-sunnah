@@ -1,7 +1,8 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 
 interface PaginationProps {
   currentPage: number;
@@ -18,6 +19,7 @@ export function Pagination({
 }: PaginationProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
 
   if (totalPages <= 1 && totalCount <= pageSize) {
     return (
@@ -28,10 +30,12 @@ export function Pagination({
   }
 
   const handlePageChange = (newPage: number) => {
-    if (newPage < 1 || newPage > totalPages) return;
+    if (newPage < 1 || newPage > totalPages || isPending) return;
     const params = new URLSearchParams(searchParams.toString());
     params.set("page", newPage.toString());
-    router.push(`/catalog?${params.toString()}`);
+    startTransition(() => {
+      router.push(`/catalog?${params.toString()}`);
+    });
   };
 
   const startItem = (currentPage - 1) * pageSize + 1;
@@ -50,10 +54,10 @@ export function Pagination({
         <button
           type="button"
           onClick={() => handlePageChange(currentPage - 1)}
-          disabled={currentPage <= 1}
+          disabled={currentPage <= 1 || isPending}
           className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          <ChevronLeft className="h-4 w-4" />
+          {isPending ? <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> : <ChevronLeft className="h-4 w-4" />}
           <span>Sebelumnya</span>
         </button>
 
@@ -95,11 +99,11 @@ export function Pagination({
         <button
           type="button"
           onClick={() => handlePageChange(currentPage + 1)}
-          disabled={currentPage >= totalPages}
+          disabled={currentPage >= totalPages || isPending}
           className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           <span>Berikutnya</span>
-          <ChevronRight className="h-4 w-4" />
+          {isPending ? <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> : <ChevronRight className="h-4 w-4" />}
         </button>
       </div>
     </div>

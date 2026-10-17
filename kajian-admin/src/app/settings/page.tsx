@@ -81,96 +81,125 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
             </div>
           </div>
 
-          <form action={saveSourceAction} className="grid gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-4 md:grid-cols-6">
-            <div>
-              <label className={labelClass} htmlFor="new-source-kind">Tipe sumber</label>
-              <select id="new-source-kind" name="source_kind" className={inputClass} defaultValue="channel">
-                <option value="channel">Channel</option><option value="playlist">Playlist</option>
-              </select>
+          <form action={saveSourceAction} className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-4 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className={labelClass} htmlFor="new-source-kind">Tipe sumber</label>
+                <select id="new-source-kind" name="source_kind" className={inputClass} defaultValue="channel">
+                  <option value="channel">Channel</option>
+                  <option value="playlist">Playlist</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2 lg:col-span-2">
+                <label className={labelClass} htmlFor="new-source-id">URL atau ID YouTube</label>
+                <input id="new-source-id" name="source_identifier" className={inputClass} placeholder="https://youtube.com/@channel atau playlist URL" required />
+              </div>
+              <div>
+                <label className={labelClass} htmlFor="new-source-name">Nama tampilan</label>
+                <input id="new-source-name" name="display_name" className={inputClass} placeholder="Nama channel / playlist" />
+              </div>
             </div>
-            <div className="md:col-span-2">
-              <label className={labelClass} htmlFor="new-source-id">URL atau ID YouTube</label>
-              <input id="new-source-id" name="source_identifier" className={inputClass} placeholder="https://youtube.com/@channel atau playlist URL" required />
-            </div>
-            <div>
-              <label className={labelClass} htmlFor="new-source-name">Nama tampilan</label>
-              <input id="new-source-name" name="display_name" className={inputClass} placeholder="Nama channel / playlist" />
-            </div>
-            <div>
-              <label className={labelClass} htmlFor="new-source-category">Kategori default</label>
-              <select id="new-source-category" name="category" className={inputClass} defaultValue="Tazkiyatun Nufus">
-                {VALID_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={labelClass} htmlFor="new-source-status">Status awal</label>
-              <select id="new-source-status" name="initial_review_status" className={inputClass} defaultValue="pending">
-                <option value="pending">Pending</option>
-                <option value="approved">Auto Approve</option>
-              </select>
-            </div>
-            <div className="flex items-end gap-3">
-              <div className="min-w-0 flex-1">
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 items-end">
+              <div>
+                <label className={labelClass} htmlFor="new-source-category">Kategori default</label>
+                <select id="new-source-category" name="category" className={inputClass} defaultValue="Tazkiyatun Nufus">
+                  {VALID_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className={labelClass} htmlFor="new-source-type">Jenis default</label>
                 <select id="new-source-type" name="content_type" className={inputClass} defaultValue="kajian">
                   {VALID_CONTENT_TYPES.map((type) => <option key={type} value={type}>{type === "kajian" ? "Kajian" : "Short"}</option>)}
                 </select>
               </div>
-              <input type="hidden" name="is_active" value="on" />
-              <button className={`${buttonClass} h-[42px] shrink-0 px-3`} title="Tambah sumber"><Plus className="h-4 w-4" /><span className="sr-only">Tambah</span></button>
+              <div>
+                <label className={labelClass} htmlFor="new-source-status">Status awal</label>
+                <select id="new-source-status" name="initial_review_status" className={inputClass} defaultValue="pending">
+                  <option value="pending">Pending</option>
+                  <option value="approved">Auto Approve</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelClass} htmlFor="new-source-max">Maks video diambil</label>
+                <input id="new-source-max" name="max_videos" type="number" min="1" max="200" className={inputClass} defaultValue="10" placeholder="10" required />
+              </div>
+              <div>
+                <input type="hidden" name="is_active" value="on" />
+                <button className={`${buttonClass} w-full h-[42px]`} title="Tambah sumber">
+                  <Plus className="h-4 w-4" />
+                  <span>Tambah Sumber</span>
+                </button>
+              </div>
             </div>
           </form>
 
           <div className="mt-4 space-y-3">
             {sources.length === 0 && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Belum ada sumber terdaftar.</p>}
             {sources.map((source) => (
-              <div key={source.id} className="rounded-xl border border-slate-200 p-4">
-                <form action={saveSourceAction} className="grid gap-3 md:grid-cols-7">
+              <div key={source.id} className="rounded-xl border border-slate-200 p-4 bg-white shadow-2xs space-y-3">
+                <form action={saveSourceAction} className="space-y-3">
                   <input type="hidden" name="id" value={source.id} />
-                  <div>
-                    <label className={labelClass}>Tipe</label>
-                    <select name="source_kind" className={inputClass} defaultValue={source.source_kind}>
-                      <option value="channel">Channel</option><option value="playlist">Playlist</option>
-                    </select>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <label className={labelClass}>Tipe sumber</label>
+                      <select name="source_kind" className={inputClass} defaultValue={source.source_kind}>
+                        <option value="channel">Channel</option>
+                        <option value="playlist">Playlist</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2 lg:col-span-2">
+                      <label className={labelClass}>URL / ID sumber</label>
+                      <input name="source_identifier" className={inputClass} defaultValue={source.source_identifier} required />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Nama tampilan</label>
+                      <input name="display_name" className={inputClass} defaultValue={source.display_name} required />
+                    </div>
                   </div>
-                  <div className="md:col-span-2">
-                    <label className={labelClass}>ID sumber</label>
-                    <input name="source_identifier" className={inputClass} defaultValue={source.source_identifier} required />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Nama</label>
-                    <input name="display_name" className={inputClass} defaultValue={source.display_name} required />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Kategori default</label>
-                    <select name="category" className={inputClass} defaultValue={source.category}>
-                      {VALID_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelClass}>Status awal</label>
-                    <select name="initial_review_status" className={inputClass} defaultValue={source.initial_review_status ?? "pending"}>
-                      <option value="pending">Pending</option>
-                      <option value="approved">Auto Approve</option>
-                    </select>
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <div className="min-w-0 flex-1">
-                      <label className={labelClass}>Jenis</label>
+
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6 items-end">
+                    <div>
+                      <label className={labelClass}>Kategori default</label>
+                      <select name="category" className={inputClass} defaultValue={source.category}>
+                        {VALID_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelClass}>Jenis default</label>
                       <select name="content_type" className={inputClass} defaultValue={source.content_type}>
                         {VALID_CONTENT_TYPES.map((type) => <option key={type} value={type}>{type === "kajian" ? "Kajian" : "Short"}</option>)}
                       </select>
                     </div>
-                    <label className="mb-2 flex items-center gap-1.5 text-xs text-slate-600">
-                      <input type="checkbox" name="is_active" defaultChecked={source.is_active} className="accent-emerald-700" /> Aktif
-                    </label>
-                    <button className={`${buttonClass} h-[42px] px-3`}>Simpan</button>
+                    <div>
+                      <label className={labelClass}>Status awal</label>
+                      <select name="initial_review_status" className={inputClass} defaultValue={source.initial_review_status ?? "pending"}>
+                        <option value="pending">Pending</option>
+                        <option value="approved">Auto Approve</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelClass}>Maks video</label>
+                      <input name="max_videos" type="number" min="1" max="200" className={inputClass} defaultValue={source.max_videos ?? 10} required />
+                    </div>
+                    <div className="flex items-center h-[42px] px-1">
+                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                        <input type="checkbox" name="is_active" defaultChecked={source.is_active} className="h-4 w-4 rounded accent-emerald-700" />
+                        <span>Aktif</span>
+                      </label>
+                    </div>
+                    <div>
+                      <button className={`${buttonClass} w-full h-[42px] px-3`}>Simpan</button>
+                    </div>
                   </div>
                 </form>
-                <form action={deleteSourceAction} className="mt-2 text-right">
-                  <input type="hidden" name="id" value={source.id} />
-                  <button className="text-xs font-medium text-rose-700 hover:text-rose-900">Hapus sumber</button>
-                </form>
+                <div className="flex justify-between items-center pt-2 border-t border-slate-100 text-xs text-slate-500">
+                  <span>Batas maksimal: <strong>{source.max_videos ?? 10} video</strong> terbaru per siklus</span>
+                  <form action={deleteSourceAction}>
+                    <input type="hidden" name="id" value={source.id} />
+                    <button className="font-medium text-rose-600 hover:text-rose-800 transition">Hapus sumber</button>
+                  </form>
+                </div>
               </div>
             ))}
           </div>

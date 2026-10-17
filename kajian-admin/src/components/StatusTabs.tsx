@@ -1,7 +1,8 @@
 "use client";
 
+import { useState, useTransition, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Clock, CheckCircle2, XCircle, Layers } from "lucide-react";
+import { Clock, CheckCircle2, XCircle, Layers, Loader2 } from "lucide-react";
 import { StatusCounts } from "@/lib/types";
 
 interface StatusTabsProps {
@@ -12,8 +13,19 @@ interface StatusTabsProps {
 export function StatusTabs({ currentStatus, counts }: StatusTabsProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [optimisticStatus, setOptimisticStatus] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  // Reset optimistic state when currentStatus prop syncs from server
+  useEffect(() => {
+    setOptimisticStatus(null);
+  }, [currentStatus]);
+
+  const activeStatus = optimisticStatus ?? currentStatus ?? "pending";
 
   const handleTabChange = (status: string) => {
+    if (status === activeStatus) return;
+    setOptimisticStatus(status);
     const params = new URLSearchParams(searchParams.toString());
     if (status === "all") {
       params.delete("status");
@@ -21,7 +33,9 @@ export function StatusTabs({ currentStatus, counts }: StatusTabsProps) {
       params.set("status", status);
     }
     params.delete("page"); // Reset ke halaman pertama saat berganti tab
-    router.push(`/catalog?${params.toString()}`);
+    startTransition(() => {
+      router.push(`/catalog?${params.toString()}`);
+    });
   };
 
   const tabs = [
@@ -64,8 +78,8 @@ export function StatusTabs({ currentStatus, counts }: StatusTabsProps) {
       <nav className="-mb-px flex space-x-2 sm:space-x-4 overflow-x-auto pb-1" aria-label="Tabs">
         {tabs.map((tab) => {
           const isActive =
-            currentStatus === tab.id ||
-            (!currentStatus && tab.id === "pending");
+            activeStatus === tab.id ||
+            (!activeStatus && tab.id === "pending");
           const Icon = tab.icon;
 
           return (
@@ -78,11 +92,15 @@ export function StatusTabs({ currentStatus, counts }: StatusTabsProps) {
                   : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 hover:bg-slate-50"
               }`}
             >
-              <Icon
-                className={`h-4 w-4 ${
-                  isActive ? "text-current" : "text-slate-400 group-hover:text-slate-600"
-                }`}
-              />
+              {isActive && isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin text-current" />
+              ) : (
+                <Icon
+                  className={`h-4 w-4 ${
+                    isActive ? "text-current" : "text-slate-400 group-hover:text-slate-600"
+                  }`}
+                />
+              )}
               <span>{tab.label}</span>
               <span
                 className={`ml-1 rounded-full px-2 py-0.5 text-xs font-semibold ${

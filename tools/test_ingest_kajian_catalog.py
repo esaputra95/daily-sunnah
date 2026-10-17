@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -163,13 +164,34 @@ class KajianCatalogIngestionTest(unittest.TestCase):
         self.assertFalse(is_due)
         self.assertEqual(trigger, "none")
 
+    def test_source_max_videos_default_and_clamp(self):
+        source_default = Source("PL1", "Fiqih", "kajian")
+        self.assertEqual(source_default.max_videos, 10)
+
+        source_custom = Source("PL1", "Fiqih", "kajian", max_videos=3)
+        self.assertEqual(source_custom.max_videos, 3)
+
+        source_clamped = Source("PL1", "Fiqih", "kajian", max_videos=500)
+        self.assertEqual(source_clamped.max_videos, 200)
+
+        source_invalid = Source("PL1", "Fiqih", "kajian", max_videos="invalid")  # type: ignore
+        self.assertEqual(source_invalid.max_videos, 10)
+
     def test_resolve_channel_uploads_shortcut(self):
         client = YouTubeDataClient("fake_key")
-        # Direct channel ID UCxxx maps to UUxxx
         channel_id = "UC1234567890123456789012"
         uploads = client.resolve_channel_uploads_playlist(channel_id)
         self.assertEqual(uploads, "UU1234567890123456789012")
 
+    def test_source_video_ids_respects_max_videos(self):
+        client = YouTubeDataClient("fake_key")
+        source = Source("PL1", "Fiqih", "kajian", max_videos=3)
+        with patch.object(client, "playlist_video_ids", return_value=["vid1", "vid2", "vid3"]) as mock_fetch:
+            res = client.source_video_ids(source)
+            mock_fetch.assert_called_once_with("PL1", max_items=3)
+            self.assertEqual(res, ["vid1", "vid2", "vid3"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

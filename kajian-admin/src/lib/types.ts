@@ -23,6 +23,7 @@ export interface KajianSource {
   category: KajianCategory;
   content_type: KajianContentType;
   initial_review_status?: ReviewStatus;
+  max_videos?: number;
   is_active: boolean;
   created_at: string;
   updated_at: string;

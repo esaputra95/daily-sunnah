@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useTransition } from "react";
 import { logoutAction } from "@/app/actions/auth";
 import { LogOut, ShieldCheck, Film, Settings2, ListVideo } from "lucide-react";
@@ -11,7 +12,11 @@ interface NavbarProps {
 }
 
 export function Navbar({ userEmail, role }: NavbarProps) {
+  const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
+
+  const isCatalog = pathname.startsWith("/catalog");
+  const isSettings = pathname.startsWith("/settings");
 
   const handleLogout = () => {
     startTransition(async () => {
@@ -23,7 +28,7 @@ export function Navbar({ userEmail, role }: NavbarProps) {
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center gap-3">
+          <Link href="/catalog" className="flex items-center gap-3 transition hover:opacity-90">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs">
               <Film className="h-5 w-5" />
             </div>
@@ -40,15 +45,33 @@ export function Navbar({ userEmail, role }: NavbarProps) {
                 Panel Kurasi Video Katalog Resmi
               </p>
             </div>
-          </div>
+          </Link>
 
           <div className="flex items-center gap-3 sm:gap-4">
             <nav className="flex items-center gap-1 rounded-xl bg-slate-100 p-1" aria-label="Navigasi panel">
-              <Link href="/catalog" className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950 sm:px-3">
-                <ListVideo className="h-3.5 w-3.5" /><span>Katalog</span>
+              <Link
+                href="/catalog"
+                prefetch={true}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition sm:px-3 ${
+                  isCatalog
+                    ? "bg-white text-emerald-800 shadow-2xs font-semibold"
+                    : "text-slate-600 hover:bg-white/60 hover:text-slate-950 font-medium"
+                }`}
+              >
+                <ListVideo className="h-3.5 w-3.5" />
+                <span>Katalog</span>
               </Link>
-              <Link href="/settings" className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950 sm:px-3">
-                <Settings2 className="h-3.5 w-3.5" /><span>Pengaturan</span>
+              <Link
+                href="/settings"
+                prefetch={true}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition sm:px-3 ${
+                  isSettings
+                    ? "bg-white text-emerald-800 shadow-2xs font-semibold"
+                    : "text-slate-600 hover:bg-white/60 hover:text-slate-950 font-medium"
+                }`}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                <span>Pengaturan</span>
               </Link>
             </nav>
             {userEmail && (

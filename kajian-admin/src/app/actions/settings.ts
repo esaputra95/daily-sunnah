@@ -78,6 +78,7 @@ export async function saveSourceAction(formData: FormData) {
     category: string;
     content_type: string;
     initial_review_status: string;
+    max_videos: number;
     is_active: boolean;
   };
 
@@ -93,6 +94,8 @@ export async function saveSourceAction(formData: FormData) {
     if (!["pending", "approved"].includes(initialReviewStatus)) {
       throw new Error("Status awal video tidak valid.");
     }
+    const rawMaxVideos = Number(field(formData, "max_videos") || 10);
+    const maxVideos = Number.isInteger(rawMaxVideos) && rawMaxVideos >= 1 && rawMaxVideos <= 200 ? rawMaxVideos : 10;
     values = {
       source_kind: kind,
       source_identifier: sourceIdentifier,
@@ -100,6 +103,7 @@ export async function saveSourceAction(formData: FormData) {
       category,
       content_type: contentType,
       initial_review_status: initialReviewStatus,
+      max_videos: maxVideos,
       is_active: field(formData, "is_active") === "on",
     };
   } catch (error) {

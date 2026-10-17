@@ -36,6 +36,7 @@ class Source:
         display_name: str = "",
         is_active: bool = True,
         initial_review_status: str = "pending",
+        max_videos: int = 10,
     ):
         self.source_identifier = source_identifier.strip()
         self.category = category.strip()
@@ -44,6 +45,11 @@ class Source:
         self.display_name = display_name.strip() or self.source_identifier
         self.is_active = is_active
         self.initial_review_status = initial_review_status.strip().lower() or "pending"
+        try:
+            val = int(max_videos)
+            self.max_videos = max(1, min(val, 200))
+        except (ValueError, TypeError):
+            self.max_videos = 10
 
     @property
     def playlist_id(self) -> str:
@@ -59,13 +65,14 @@ class Source:
             and self.source_kind == other.source_kind
             and self.is_active == other.is_active
             and self.initial_review_status == other.initial_review_status
+            and self.max_videos == other.max_videos
         )
 
     def __hash__(self) -> int:
-        return hash((self.source_kind, self.source_identifier, self.category, self.content_type, self.is_active, self.initial_review_status))
+        return hash((self.source_kind, self.source_identifier, self.category, self.content_type, self.is_active, self.initial_review_status, self.max_videos))
 
     def __repr__(self) -> str:
-        return f"Source({self.source_kind}:{self.source_identifier}, category={self.category}, type={self.content_type}, status={self.initial_review_status})"
+        return f"Source({self.source_kind}:{self.source_identifier}, category={self.category}, type={self.content_type}, status={self.initial_review_status}, max={self.max_videos})"
 
 
 def parse_duration(value: str) -> int:
@@ -94,6 +101,7 @@ def load_sources(path: Path = SOURCE_FILE) -> list[Source]:
         display_name = str(item.get("display_name", "")).strip()
         is_active = bool(item.get("is_active", True))
         initial_review_status = str(item.get("initial_review_status", "pending")).strip().lower()
+        max_videos = int(item.get("max_videos", 10))
         if not playlist_id:
             raise ValueError("Every source needs playlist_id or source_identifier")
         if category not in VALID_CATEGORIES:
@@ -112,6 +120,7 @@ def load_sources(path: Path = SOURCE_FILE) -> list[Source]:
             display_name=display_name or playlist_id,
             is_active=is_active,
             initial_review_status=initial_review_status,
+            max_videos=max_videos,
         ))
     return sources
 
@@ -203,7 +212,8 @@ class YouTubeDataClient:
         found: list[str] = []
         page_token: str | None = None
         while True:
-            params = {"part": "contentDetails", "playlistId": playlist_id, "maxResults": "50"}
+            limit = min(50, max_items - len(found)) if max_items else 50
+            params = {"part": "contentDetails", "playlistId": playlist_id, "maxResults": str(max(1, limit))}
             if page_token:
                 params["pageToken"] = page_token
             result = self.get("playlistItems", **params)
@@ -218,9 +228,9 @@ class YouTubeDataClient:
     def source_video_ids(self, source: Source) -> list[str]:
         if source.source_kind == "channel":
             uploads_playlist_id = self.resolve_channel_uploads_playlist(source.source_identifier)
-            return self.playlist_video_ids(uploads_playlist_id)
+            return self.playlist_video_ids(uploads_playlist_id, max_items=source.max_videos)
         else:
-            return self.playlist_video_ids(source.source_identifier)
+            return self.playlist_video_ids(source.source_identifier, max_items=source.max_videos)
 
     def videos(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -289,6 +299,7 @@ class SupabaseClient:
                 ctype = str(item.get("content_type", "")).strip().lower()
                 display = str(item.get("display_name", "")).strip()
                 init_status = str(item.get("initial_review_status", "pending")).strip().lower()
+                max_v = int(item.get("max_videos", 10))
                 if not ident or cat not in VALID_CATEGORIES or ctype not in VALID_CONTENT_TYPES:
                     continue
                 key = (kind, ident)
@@ -303,6 +314,7 @@ class SupabaseClient:
                     display_name=display or ident,
                     is_active=True,
                     initial_review_status=init_status,
+                    max_videos=max_v,
                 ))
             return sources
         except Exception:

@@ -45,10 +45,10 @@ export default async function CatalogPage({ searchParams }: CatalogPageProps) {
 
   // 3. Ambil jumlah untuk masing-masing status tab
   const [pendingRes, approvedRes, rejectedRes, allRes] = await Promise.all([
-    supabase.from("kajian_videos").select("*", { count: "exact", head: true }).eq("review_status", "pending"),
-    supabase.from("kajian_videos").select("*", { count: "exact", head: true }).eq("review_status", "approved"),
-    supabase.from("kajian_videos").select("*", { count: "exact", head: true }).eq("review_status", "rejected"),
-    supabase.from("kajian_videos").select("*", { count: "exact", head: true }),
+    supabase.from("kajian_videos").select("id", { count: "exact", head: true }).eq("review_status", "pending"),
+    supabase.from("kajian_videos").select("id", { count: "exact", head: true }).eq("review_status", "approved"),
+    supabase.from("kajian_videos").select("id", { count: "exact", head: true }).eq("review_status", "rejected"),
+    supabase.from("kajian_videos").select("id", { count: "exact", head: true }),
   ]);
 
   const counts: StatusCounts = {
