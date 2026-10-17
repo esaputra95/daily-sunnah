@@ -16,7 +16,7 @@ class QuranBookmarkStore(context: Context) {
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             val bookmark = QuranBookmark(item.optString("verseKey"), item.optInt("page"), item.optLong("createdAt"))
             bookmark.takeIf {
-                VERSE_KEY.matches(it.verseKey) && it.page in MushafAssetRepository.MIN_PAGE..MushafAssetRepository.MAX_PAGE
+                QuranVerseKey.isValid(it.verseKey) && it.page in MushafAssetRepository.MIN_PAGE..MushafAssetRepository.MAX_PAGE
             }
         }.sortedByDescending { it.createdAt }
     }.getOrDefault(emptyList())
@@ -26,7 +26,7 @@ class QuranBookmarkStore(context: Context) {
 
     @Synchronized
     fun toggle(verseKey: String, page: Int): List<QuranBookmark> {
-        require(VERSE_KEY.matches(verseKey))
+        require(QuranVerseKey.isValid(verseKey))
         require(page in MushafAssetRepository.MIN_PAGE..MushafAssetRepository.MAX_PAGE)
         val updated = all().toMutableList()
         val existingIndex = updated.indexOfFirst { it.verseKey == verseKey }
@@ -50,6 +50,5 @@ class QuranBookmarkStore(context: Context) {
     companion object {
         private const val FILE_NAME = "quran-bookmarks"
         private const val KEY_BOOKMARKS = "items"
-        private val VERSE_KEY = Regex("^[1-9][0-9]?:[1-9][0-9]{0,2}$")
     }
 }

@@ -1,13 +1,16 @@
+import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val localProperties = java.util.Properties().apply {
+val localProperties = Properties().apply {
     val localPropertiesFile = rootProject.file("local.properties")
     if (localPropertiesFile.isFile) {
-        localPropertiesFile.inputStream().use(::load)
+        localPropertiesFile.inputStream().use { input -> load(input) }
     }
 }
 fun configValue(name: String): String =
@@ -41,8 +44,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.fromTarget("17"))
     }
 }
 
@@ -51,6 +57,7 @@ dependencies {
     implementation(composeBom)
 
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")

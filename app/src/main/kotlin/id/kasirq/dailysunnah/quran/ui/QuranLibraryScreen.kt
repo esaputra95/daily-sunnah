@@ -1,7 +1,10 @@
 package id.kasirq.dailysunnah.quran.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,7 +29,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -43,23 +45,27 @@ import id.kasirq.dailysunnah.quran.data.QuranJuzIndex
 import id.kasirq.dailysunnah.quran.data.SurahPageIndex
 import id.kasirq.dailysunnah.quran.data.SurahStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun QuranLibraryScreen(
     onBack: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenSearch: () -> Unit,
     onSelectPage: (Int) -> Unit,
     onOpenBookmark: (QuranBookmark) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
     val bookmarkStore = remember { QuranBookmarkStore(context) }
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val pagerState = rememberPagerState(pageCount = { 3 })
     var surahs by remember { mutableStateOf<List<SurahStart>>(emptyList()) }
     var bookmarks by remember { mutableStateOf<List<QuranBookmark>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf(false) }
-
     LaunchedEffect(Unit) {
         val result = withContext(Dispatchers.IO) {
             runCatching { SurahPageIndex.load(context) } to bookmarkStore.all()
@@ -81,45 +87,57 @@ fun QuranLibraryScreen(
                         Text("Mushaf Madinah", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
+                actions = {
+                    androidx.compose.material3.IconButton(onClick = onOpenSettings) {
+                        Text("⚙", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                },
             )
         },
     ) { contentPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-            TabRow(selectedTabIndex = selectedTab) {
+            TabRow(selectedTabIndex = pagerState.currentPage) {
                 listOf("Surah", "Juz", "Bookmark").forEachIndexed { index, title ->
                     Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        selected = pagerState.currentPage == index,
+                        onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
                         text = { Text(title) },
                     )
                 }
             }
             Surface(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
-                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).clickable(onClick = onOpenSearch),
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
             ) {
                 Text(
-                    "Daftar Surah dan Juz tersedia offline.",
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    "⌕   Cari terjemah atau frasa",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            when {
-                isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Memuat daftar…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.weight(1f),
+                beyondViewportPageCount = 1,
+            ) { page ->
+                when {
+                    isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Memuat daftar…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    loadError -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                        Text("Daftar Surah offline tidak dapat dibaca. Coba perbarui aplikasi.")
+                    }
+                    page == 0 -> SurahList(surahs = surahs, onSelect = { onSelectPage(it.page) })
+                    page == 1 -> JuzList(surahs = surahs, onSelect = { onSelectPage(it.page) })
+                    else -> BookmarkList(
+                        surahs = surahs,
+                        bookmarks = bookmarks,
+                        onSelect = onOpenBookmark,
+                    )
                 }
-                loadError -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Text("Daftar Surah offline tidak dapat dibaca. Coba perbarui aplikasi.")
-                }
-                selectedTab == 0 -> SurahList(surahs = surahs, onSelect = { onSelectPage(it.page) })
-                selectedTab == 1 -> JuzList(surahs = surahs, onSelect = { onSelectPage(it.page) })
-                else -> BookmarkList(
-                    surahs = surahs,
-                    bookmarks = bookmarks,
-                    onSelect = onOpenBookmark,
-                )
             }
         }
     }

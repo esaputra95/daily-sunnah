@@ -61,6 +61,34 @@ class ReadingGoalStore(context: Context) {
     }
 
     @Synchronized
+    fun markPageRead(page: Int, today: LocalDate = LocalDate.now()): ReadingGoalSnapshot {
+        require(page in MushafAssetRepository.MIN_PAGE..MushafAssetRepository.MAX_PAGE)
+        val current = load(today)
+        if (page in current.completedPages) return current
+
+        val updated = current.completedPages + page
+        preferences.edit()
+            .putString(KEY_PROGRESS_DATE, today.toString())
+            .putString(KEY_COMPLETED_PAGES, updated.sorted().joinToString(","))
+            .apply()
+        return current.copy(completedPages = updated)
+    }
+
+    @Synchronized
+    fun unmarkPagesRead(pages: Set<Int>, today: LocalDate = LocalDate.now()): ReadingGoalSnapshot {
+        require(pages.all { it in MushafAssetRepository.MIN_PAGE..MushafAssetRepository.MAX_PAGE })
+        val current = load(today)
+        val updated = current.completedPages - pages
+        if (updated == current.completedPages) return current
+
+        preferences.edit()
+            .putString(KEY_PROGRESS_DATE, today.toString())
+            .putString(KEY_COMPLETED_PAGES, updated.sorted().joinToString(","))
+            .apply()
+        return current.copy(completedPages = updated)
+    }
+
+    @Synchronized
     fun updateSettings(targetPages: Int, reminderMinutes: List<Int>): ReadingGoalSnapshot {
         require(targetPages in 1..MushafAssetRepository.MAX_PAGE)
         val normalizedReminders = reminderMinutes.distinct().filter { it in 0..1439 }.sorted().take(MAX_REMINDERS)

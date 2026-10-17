@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import id.kasirq.dailysunnah.MainActivity
+import id.kasirq.dailysunnah.ibadah.data.PrayerReminderScheduler
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -69,6 +70,7 @@ class ReadingGoalBootReceiver : BroadcastReceiver() {
             intent.action == Intent.ACTION_TIMEZONE_CHANGED
         ) {
             ReadingGoalReminderScheduler.scheduleNext(context)
+            PrayerReminderScheduler.scheduleNext(context)
         }
     }
 }

@@ -14,8 +14,15 @@ class QuranReaderPreferences(context: Context) {
         }
     }
 
+    fun mushafZoomEnabled(): Boolean = preferences.getBoolean(KEY_MUSHAF_ZOOM_ENABLED, false)
+
+    fun setMushafZoomEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_MUSHAF_ZOOM_ENABLED, enabled).apply()
+    }
+
     companion object {
         private const val FILE_NAME = "quran-reader"
         private const val KEY_LAST_PAGE = "last-read-page"
+        private const val KEY_MUSHAF_ZOOM_ENABLED = "mushaf-zoom-enabled"
     }
 }

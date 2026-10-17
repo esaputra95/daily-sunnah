@@ -46,6 +46,15 @@ class MushafAssetRepository(context: Context) {
         Unit
     }
 
+    suspend fun cachedPageCount(): Int = withContext(Dispatchers.IO) {
+        (MIN_PAGE..MAX_PAGE).count { page ->
+            val pageId = page.toString().padStart(3, '0')
+            val expected = manifest[page]
+            expected != null && File(images, "$pageId.webp").length() == expected.imageBytes &&
+                File(layouts, "$pageId.json").length() == expected.layoutBytes && File(ready, "$pageId.ready").isFile
+        }
+    }
+
     private suspend fun ensurePagePair(page: Int): PageFiles = PAGE_LOCKS.computeIfAbsent(page) { Mutex() }.withLock {
         val pageId = page.toString().padStart(3, '0')
         val image = File(images, "$pageId.webp")

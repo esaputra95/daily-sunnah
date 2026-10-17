@@ -21,8 +21,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import id.kasirq.dailysunnah.ui.ModernTextFieldShape
+import id.kasirq.dailysunnah.ui.modernTextFieldColors
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -30,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -51,6 +56,7 @@ import androidx.compose.ui.text.style.TextDecoration
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ZakatSavingsScreen(onBack: () -> Unit) {
+    var selectedCategory by rememberSaveable { mutableIntStateOf(0) }
     var savingsText by rememberSaveable { mutableStateOf("") }
     var goldPriceText by rememberSaveable { mutableStateOf("") }
     var priceDate by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
@@ -80,17 +86,27 @@ fun ZakatSavingsScreen(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Zakat tabungan") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Kembali") } },
-                actions = { TextButton(onClick = { showHistory = true }) { Text("Riwayat ${history.size}") } },
-            )
+            Column {
+                TopAppBar(
+                    title = { Text("Kalkulator zakat") },
+                    navigationIcon = { TextButton(onClick = onBack) { Text("Kembali") } },
+                    actions = { if (selectedCategory == 0) TextButton(onClick = { showHistory = true }) { Text("Riwayat ${history.size}") } },
+                )
+                ScrollableTabRow(selectedTabIndex = selectedCategory) {
+                    listOf("Tabungan", "Penghasilan", "Emas/Perak", "Fitrah").forEachIndexed { index, label ->
+                        Tab(selected = selectedCategory == index, onClick = { selectedCategory = index }, text = { Text(label) })
+                    }
+                }
+            }
         },
     ) { contentPadding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(contentPadding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (selectedCategory != 0) {
+                ZakatAdditionalCategoryScreen(selectedCategory)
+            } else {
             Text(
                 "Hitung dari total tabungan yang kamu miliki saat tanggal zakat. Harga emas dimasukkan manual agar hasil tidak bergantung pada layanan harga eksternal.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -100,6 +116,8 @@ fun ZakatSavingsScreen(onBack: () -> Unit) {
             OutlinedTextField(
                 value = priceDate,
                 onValueChange = { priceDate = it; clearResult() },
+                shape = ModernTextFieldShape,
+                colors = modernTextFieldColors(),
                 label = { Text("Tanggal harga emas") },
                 supportingText = { Text("Format YYYY-MM-DD") },
                 singleLine = true,
@@ -108,6 +126,8 @@ fun ZakatSavingsScreen(onBack: () -> Unit) {
             OutlinedTextField(
                 value = priceSource,
                 onValueChange = { priceSource = it; clearResult() },
+                shape = ModernTextFieldShape,
+                colors = modernTextFieldColors(),
                 label = { Text("Sumber harga emas") },
                 placeholder = { Text("Contoh: harga jual toko atau penyedia emas") },
                 singleLine = true,
@@ -196,6 +216,7 @@ fun ZakatSavingsScreen(onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.primary,
             )
             Text("Riwayat tersimpan hanya setelah kamu menekan Simpan lokal; data tetap di perangkat dan tidak dikirim ke server.", style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 
@@ -271,6 +292,8 @@ private fun MoneyInput(label: String, value: String, onValueChange: (String) -> 
     OutlinedTextField(
         value = value,
         onValueChange = { onValueChange(it.filter(Char::isDigit).take(16)) },
+        shape = ModernTextFieldShape,
+        colors = modernTextFieldColors(),
         label = { Text(label) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         singleLine = true,

@@ -22,9 +22,13 @@ class MushafPrefetchScheduler(context: Context) {
         enqueue(pages.distinct(), prioritize = false)
     }
 
-    private fun enqueue(pages: List<Int>, prioritize: Boolean) {
+    fun prepareCompleteMushaf(wifiOnly: Boolean = true) {
+        enqueue((MushafAssetRepository.MIN_PAGE..MushafAssetRepository.MAX_PAGE).toList(), prioritize = false, wifiOnly = wifiOnly)
+    }
+
+    private fun enqueue(pages: List<Int>, prioritize: Boolean, wifiOnly: Boolean = false) {
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
             .build()
         pages.forEach { page ->
             val builder = OneTimeWorkRequestBuilder<MushafPrefetchWorker>()

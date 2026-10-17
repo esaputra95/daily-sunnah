@@ -21,11 +21,18 @@ data class MushafVerseRegion(
     val rect: MushafRect,
 )
 
+data class MushafSectionHeader(
+    val chapterId: Int,
+    val lineNumber: Int,
+    val rect: MushafRect,
+)
+
 data class MushafPageLayout(
     val schemaVersion: Int,
     val page: Int,
     val renderViewBox: MushafRect,
     val verseRegions: List<MushafVerseRegion>,
+    val sectionHeaders: List<MushafSectionHeader> = emptyList(),
 )
 
 data class MushafPageAsset(
@@ -52,9 +59,7 @@ object MushafLayoutParser {
             for (index in 0 until boxes.length()) {
                 val box = boxes.getJSONObject(index)
                 val verseKey = box.getString("verseKey")
-                require(VERSE_KEY.matches(verseKey)) { "Invalid verseKey at page $page box $index" }
-                val (surahNumber, verseNumber) = verseKey.split(':').map(String::toInt)
-                require(surahNumber in 1..114 && verseNumber in 1..286) { "Invalid Quran reference at page $page box $index" }
+                require(QuranVerseKey.isValid(verseKey)) { "Invalid verseKey at page $page box $index" }
                 val rect = box.toRect()
                 require(rect.width > 0f && rect.height > 0f) { "Invalid verse box at page $page box $index" }
                 require(
@@ -69,7 +74,33 @@ object MushafLayoutParser {
             }
         }
 
-        return MushafPageLayout(schemaVersion, page, viewBox, regions)
+        val sectionHeaderBoxes = root.optJSONArray("sectionHeaderBoxes")
+        val sectionHeaders = if (sectionHeaderBoxes == null) {
+            emptyList()
+        } else {
+            buildList(sectionHeaderBoxes.length()) {
+                for (index in 0 until sectionHeaderBoxes.length()) {
+                    val header = runCatching {
+                        val box = sectionHeaderBoxes.getJSONObject(index)
+                        val chapterId = box.getInt("chapterId")
+                        val lineNumber = box.getInt("lineNumber")
+                        val rect = box.toRect()
+                        val isInsideViewBox = rect.x >= viewBox.x - GEOMETRY_EPSILON &&
+                            rect.y >= viewBox.y - GEOMETRY_EPSILON &&
+                            rect.right <= viewBox.right + GEOMETRY_EPSILON &&
+                            rect.bottom <= viewBox.bottom + GEOMETRY_EPSILON
+                        if (chapterId !in 1..114 || lineNumber <= 0 || rect.width <= 0f || rect.height <= 0f || !isInsideViewBox) {
+                            null
+                        } else {
+                            MushafSectionHeader(chapterId, lineNumber, rect)
+                        }
+                    }.getOrNull()
+                    if (header != null) add(header)
+                }
+            }
+        }
+
+        return MushafPageLayout(schemaVersion, page, viewBox, regions, sectionHeaders)
     }
 
     private fun JSONObject.toRect() = MushafRect(
@@ -80,6 +111,5 @@ object MushafLayoutParser {
     )
 
     private const val GEOMETRY_EPSILON = 0.1f
-    private val VERSE_KEY = Regex("^[1-9][0-9]?:[1-9][0-9]{0,2}$")
 }
 
