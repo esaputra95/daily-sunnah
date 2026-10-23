@@ -1,14 +1,21 @@
+import json
+import tempfile
 import unittest
+from unittest.mock import Mock, patch
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ingest_kajian_catalog import (
     Source,
+    YouTubeDataClient,
     calculate_next_run,
-    collect_source_map,
+    classify_content_type,
     ingest_rows,
-    is_run_due,
+    load_sources,
     parse_duration,
-    parse_sources,
+    should_run,
+    SupabaseClient,
+    run,
 )
 
 
@@ -22,35 +29,12 @@ class KajianCatalogIngestionTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_duration("18:42")
 
-    def test_parses_channel_and_playlist_sources(self):
-        sources = parse_sources([
-            {
-                "source_kind": "channel", "source_identifier": "@nuzuldzikri",
-                "display_name": "Nuzul Dzikri", "category": "Fiqih", "content_type": "kajian",
-            },
-            {
-                "source_kind": "playlist", "source_identifier": "PL1234567890",
-                "display_name": "Shorts", "category": "Tazkiyatun Nufus", "content_type": "short",
-            },
-        ])
-        self.assertEqual([source.source_kind for source in sources], ["channel", "playlist"])
-
-    def test_rejects_invalid_source_classification(self):
-        with self.assertRaises(ValueError):
-            parse_sources([{
-                "source_kind": "playlist", "source_identifier": "PL1234567890",
-                "display_name": "Shorts", "category": "Other", "content_type": "short",
-            }])
-
-    def test_schedule_due_and_next_run(self):
-        now = datetime(2026, 10, 15, 17, 0, tzinfo=timezone.utc)
-        daily = {"schedule_mode": "daily", "daily_time": "00:00:00", "timezone": "Asia/Jakarta"}
-        self.assertFalse(is_run_due({**daily, "next_run_at": "2026-10-15T17:15:00+00:00"}, now))
-        self.assertTrue(is_run_due({**daily, "next_run_at": "2026-10-15T16:59:00+00:00"}, now))
-        self.assertTrue(is_run_due({**daily, "run_requested_at": "2026-10-15T16:00:00+00:00"}, now))
-        self.assertEqual(calculate_next_run(daily, now).isoformat(), "2026-10-16T17:00:00+00:00")
-        interval = {"schedule_mode": "interval", "interval_minutes": 60}
-        self.assertEqual(calculate_next_run(interval, now).isoformat(), "2026-10-15T18:00:00+00:00")
+    def test_requires_editorial_content_type_and_category(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_file = Path(directory) / "sources.json"
+            source_file.write_text(json.dumps([{"playlist_id": "PL1", "category": "Fiqih"}]))
+            with self.assertRaises(ValueError):
+                load_sources(source_file)
 
     def test_new_candidates_are_classified_without_auto_approval(self):
         video_id = "abcdefghijk"
@@ -65,14 +49,56 @@ class KajianCatalogIngestionTest(unittest.TestCase):
                     "status": {"privacyStatus": "public", "embeddable": True},
                 }
             },
-            {video_id: Source("playlist", "PL1234567890", "Fiqih playlist", "Fiqih", "kajian")},
+            {video_id: Source("PL1", "Fiqih", "kajian")},
             {},
+            default_review_status="pending",
         )
         self.assertEqual(unavailable, [])
         self.assertEqual(rows[0]["category"], "Fiqih")
         self.assertEqual(rows[0]["content_type"], "kajian")
         self.assertEqual(rows[0]["review_status"], "pending")
+        self.assertIsNone(rows[0]["reviewed_at"])
         self.assertEqual(rows[0]["duration_seconds"], 2_700)
+
+    def test_new_candidates_can_be_auto_approved_via_global_setting(self):
+        video_id = "autoappr123"
+        rows, _ = ingest_rows(
+            {
+                video_id: {
+                    "snippet": {
+                        "title": "Kajian Baru", "description": "", "channelTitle": "Channel", "channelId": "UC1",
+                        "publishedAt": "2026-10-14T00:00:00Z", "thumbnails": {"high": {"url": "https://i.ytimg.com/x.jpg"}},
+                    },
+                    "contentDetails": {"duration": "PT10M"},
+                    "status": {"privacyStatus": "public", "embeddable": True},
+                }
+            },
+            {video_id: Source("PL1", "Akidah", "kajian")},
+            {},
+            default_review_status="approved",
+        )
+        self.assertEqual(rows[0]["review_status"], "approved")
+        self.assertIsNotNone(rows[0]["reviewed_at"])
+
+    def test_new_candidates_can_be_auto_approved_via_source_setting(self):
+        video_id = "sourceappr1"
+        rows, _ = ingest_rows(
+            {
+                video_id: {
+                    "snippet": {
+                        "title": "Kajian Short", "description": "", "channelTitle": "Channel", "channelId": "UC1",
+                        "publishedAt": "2026-10-14T00:00:00Z", "thumbnails": {"high": {"url": "https://i.ytimg.com/x.jpg"}},
+                    },
+                    "contentDetails": {"duration": "PT50S"},
+                    "status": {"privacyStatus": "public", "embeddable": True},
+                }
+            },
+            {video_id: Source("PL1", "Sirah", "short", initial_review_status="approved")},
+            {},
+            default_review_status="pending",
+        )
+        self.assertEqual(rows[0]["review_status"], "approved")
+        self.assertIsNotNone(rows[0]["reviewed_at"])
 
     def test_excludes_private_and_non_embeddable_videos(self):
         rows, unavailable = ingest_rows(
@@ -95,7 +121,7 @@ class KajianCatalogIngestionTest(unittest.TestCase):
                     "status": {"privacyStatus": "public", "embeddable": True},
                 }
             },
-            {video_id: Source("playlist", "PL1234567890", "Fiqih playlist", "Fiqih", "kajian")},
+            {video_id: Source("PL1", "Fiqih", "kajian")},
             {
                 video_id: {
                     "category": "Muamalah",
@@ -109,33 +135,201 @@ class KajianCatalogIngestionTest(unittest.TestCase):
         self.assertEqual(rows[0]["review_status"], "approved")
         self.assertEqual(rows[0]["reviewed_at"], "2026-10-13T00:00:00+00:00")
 
-    def test_collects_duplicate_video_with_matching_source_defaults(self):
-        video_id = "abcdefghijk"
+    def test_calculate_next_run_interval(self):
+        fixed_time = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        settings = {"schedule_mode": "interval", "interval_minutes": 60}
+        next_run = calculate_next_run(settings, current_time=fixed_time)
+        self.assertEqual(next_run, "2026-10-15T13:00:00+00:00")
 
-        class FakeYouTube:
-            def source_video_ids(self, _source):
-                return [video_id]
+    def test_calculate_next_run_daily_asia_jakarta(self):
+        # 12:00 UTC is 19:00 WIB. Daily time is 00:00 WIB (which is 17:00 UTC).
+        # Since 19:00 WIB > 00:00 WIB, next run is tomorrow at 00:00 WIB = 17:00 UTC today.
+        fixed_time = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        settings = {"schedule_mode": "daily", "daily_time": "00:00"}
+        next_run = calculate_next_run(settings, current_time=fixed_time)
+        self.assertEqual(next_run, "2026-10-15T17:00:00+00:00")
 
-        sources = [
-            Source("playlist", "PL1234567890", "Playlist", "Fiqih", "kajian"),
-            Source("channel", "@nuzul", "Channel", "Fiqih", "kajian"),
-        ]
-        result = collect_source_map(FakeYouTube(), sources)
-        self.assertEqual(result[video_id].source_kind, "playlist")
+    def test_should_run_manual_trigger_takes_precedence(self):
+        settings = {
+            "run_requested_at": "2026-10-15T10:00:00Z",
+            "next_run_at": "2026-10-15T23:59:59Z",
+        }
+        is_due, trigger = should_run(settings)
+        self.assertTrue(is_due)
+        self.assertEqual(trigger, "manual")
 
-    def test_rejects_duplicate_video_with_conflicting_source_defaults(self):
-        video_id = "abcdefghijk"
+    def test_should_run_skips_when_next_run_is_in_future(self):
+        settings = {
+            "run_requested_at": None,
+            "next_run_at": "2099-01-01T00:00:00+00:00",
+        }
+        is_due, trigger = should_run(settings)
+        self.assertFalse(is_due)
+        self.assertEqual(trigger, "none")
 
-        class FakeYouTube:
-            def source_video_ids(self, _source):
-                return [video_id]
+    def test_backfill_runs_without_advancing_a_future_daily_schedule(self):
+        settings = {
+            "run_requested_at": None,
+            "next_run_at": "2099-01-01T00:00:00+00:00",
+        }
+        is_due, trigger = should_run(settings, backfill_pending=True)
+        self.assertTrue(is_due)
+        self.assertEqual(trigger, "backfill")
 
-        sources = [
-            Source("channel", "@nuzul", "Channel", "Fiqih", "kajian"),
-            Source("playlist", "PL1234567890", "Playlist", "Fiqih", "short"),
-        ]
-        with self.assertRaises(ValueError):
-            collect_source_map(FakeYouTube(), sources)
+    def test_due_daily_schedule_takes_precedence_over_backfill(self):
+        settings = {
+            "run_requested_at": None,
+            "next_run_at": "2000-01-01T00:00:00+00:00",
+        }
+        is_due, trigger = should_run(settings, backfill_pending=True)
+        self.assertTrue(is_due)
+        self.assertEqual(trigger, "schedule")
+
+    def test_playlist_page_returns_cursor_for_resumable_backfill(self):
+        client = YouTubeDataClient("fake_key")
+        with patch.object(client, "get", return_value={
+            "items": [
+                {"contentDetails": {"videoId": "abcdefghijk"}},
+                {"contentDetails": {"videoId": "bad"}},
+            ],
+            "nextPageToken": "cursor-page-2",
+        }) as request:
+            video_ids, cursor = client.playlist_video_page("PL123", "cursor-page-1", 50)
+        self.assertEqual(video_ids, ["abcdefghijk"])
+        self.assertEqual(cursor, "cursor-page-2")
+        request.assert_called_once_with(
+            "playlistItems", part="contentDetails", playlistId="PL123", maxResults="50", pageToken="cursor-page-1"
+        )
+
+    def test_existing_records_query_is_limited_to_current_candidates(self):
+        client = SupabaseClient("https://example.supabase.co", "secret")
+        with patch.object(client, "request", return_value=[{"youtube_video_id": "abcdefghijk"}]) as request:
+            records = client.video_records(["abcdefghijk"])
+        self.assertEqual(set(records), {"abcdefghijk"})
+        self.assertIn("youtube_video_id=in.(abcdefghijk)", request.call_args.args[1])
+
+    @patch.dict("os.environ", {
+        "YOUTUBE_DATA_API_KEY": "test-key",
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SECRET_KEY": "test-secret",
+        "FORCE_RUN": "false",
+    })
+    def test_backfill_run_leaves_next_scheduled_run_untouched(self):
+        source = Source(
+            "PL123", "Fiqih", "kajian", source_id="source-1",
+            backfill_status="queued", backfill_page_token="resume-token",
+            backfill_pages_processed=3, backfill_videos_processed=150,
+        )
+        supabase = Mock()
+        supabase.get_settings.return_value = {
+            "run_requested_at": None,
+            "next_run_at": "2099-01-01T00:00:00+00:00",
+            "default_review_status": "pending",
+        }
+        supabase.get_active_sources.return_value = [source]
+        supabase.is_run_in_progress.return_value = False
+        supabase.start_run.return_value = "run-1"
+        supabase.video_records.return_value = {}
+
+        youtube = Mock()
+        youtube.source_video_page.return_value = (["abcdefghijk"], None)
+        youtube.videos.return_value = {
+            "abcdefghijk": {
+                "snippet": {
+                    "title": "Arsip lama", "description": "", "channelTitle": "Channel",
+                    "channelId": "UC1", "publishedAt": "2020-01-01T00:00:00Z", "thumbnails": {},
+                },
+                "contentDetails": {"duration": "PT10M"},
+                "status": {"privacyStatus": "public", "embeddable": True},
+            }
+        }
+
+        with patch("ingest_kajian_catalog.SupabaseClient", return_value=supabase), patch(
+            "ingest_kajian_catalog.YouTubeDataClient", return_value=youtube
+        ):
+            self.assertEqual(run(), 0)
+
+        supabase.start_run.assert_called_once_with("backfill")
+        supabase.update_settings.assert_not_called()
+        youtube.source_video_page.assert_called_once_with(source, "resume-token", 50)
+        self.assertEqual(supabase.update_source_backfill.call_args.args[1], "completed")
+        self.assertEqual(supabase.update_source_backfill.call_args.kwargs["processed_video_ids"], ["abcdefghijk"])
+
+    def test_source_max_videos_default_and_clamp(self):
+        source_default = Source("PL1", "Fiqih", "kajian")
+        self.assertEqual(source_default.max_videos, 10)
+
+        source_custom = Source("PL1", "Fiqih", "kajian", max_videos=3)
+        self.assertEqual(source_custom.max_videos, 3)
+
+        source_clamped = Source("PL1", "Fiqih", "kajian", max_videos=500)
+        self.assertEqual(source_clamped.max_videos, 200)
+
+        source_invalid = Source("PL1", "Fiqih", "kajian", max_videos="invalid")  # type: ignore
+        self.assertEqual(source_invalid.max_videos, 10)
+
+    def test_resolve_channel_uploads_shortcut(self):
+        client = YouTubeDataClient("fake_key")
+        channel_id = "UC1234567890123456789012"
+        uploads = client.resolve_channel_uploads_playlist(channel_id)
+        self.assertEqual(uploads, "UU1234567890123456789012")
+
+    def test_source_video_ids_respects_max_videos(self):
+        client = YouTubeDataClient("fake_key")
+        source = Source("PL1", "Fiqih", "kajian", max_videos=3)
+        with patch.object(client, "playlist_video_ids", return_value=["vid1", "vid2", "vid3"]) as mock_fetch:
+            res = client.source_video_ids(source)
+            mock_fetch.assert_called_once_with("PL1", max_items=3)
+            self.assertEqual(res, ["vid1", "vid2", "vid3"])
+
+    def test_classify_content_type_duration_rule(self):
+        # >= 5 menit (300 detik) adalah kajian
+        self.assertEqual(classify_content_type(300), "kajian")
+        self.assertEqual(classify_content_type(1800), "kajian")
+        self.assertEqual(classify_content_type(301), "kajian")
+
+        # < 5 menit (300 detik) adalah short
+        self.assertEqual(classify_content_type(299), "short")
+        self.assertEqual(classify_content_type(60), "short")
+        self.assertEqual(classify_content_type(0), "short")
+
+    def test_ingest_rows_classifies_short_if_under_5_minutes(self):
+        video_id = "shortvid123"
+        rows, _ = ingest_rows(
+            {
+                video_id: {
+                    "snippet": {
+                        "title": "Short Faedah", "description": "", "channelTitle": "Channel", "channelId": "UC1",
+                        "publishedAt": "2026-10-14T00:00:00Z", "thumbnails": {"high": {"url": "https://i.ytimg.com/x.jpg"}},
+                    },
+                    "contentDetails": {"duration": "PT2M30S"},  # 150 seconds < 300 seconds
+                    "status": {"privacyStatus": "public", "embeddable": True},
+                }
+            },
+            {video_id: Source("PL1", "Sirah", "kajian")},  # source had "kajian" default, but duration is 2.5m
+            {},
+        )
+        self.assertEqual(rows[0]["content_type"], "short")
+        self.assertEqual(rows[0]["duration_seconds"], 150)
+
+    def test_ingest_rows_classifies_kajian_if_5_minutes_or_more(self):
+        video_id = "kajianvid123"
+        rows, _ = ingest_rows(
+            {
+                video_id: {
+                    "snippet": {
+                        "title": "Kajian Panjang", "description": "", "channelTitle": "Channel", "channelId": "UC1",
+                        "publishedAt": "2026-10-14T00:00:00Z", "thumbnails": {"high": {"url": "https://i.ytimg.com/x.jpg"}},
+                    },
+                    "contentDetails": {"duration": "PT5M1S"},  # 301 seconds >= 300 seconds
+                    "status": {"privacyStatus": "public", "embeddable": True},
+                }
+            },
+            {video_id: Source("PL1", "Sirah", "short")},  # source had "short" default, but duration is > 5m
+            {},
+        )
+        self.assertEqual(rows[0]["content_type"], "kajian")
+        self.assertEqual(rows[0]["duration_seconds"], 301)
 
 
 if __name__ == "__main__":

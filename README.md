@@ -19,9 +19,9 @@ Native Android starter for the Daily Sunnah 1.0 PRD. This is a new Kotlin and Je
 - A bundled integrity manifest pins image/layout hashes, byte sizes, and image dimensions for all 604 pages. Startup rejects a CDN asset that differs from the app's declared mushaf version.
 - Daily reading target is configurable from 1–604 pages; users mark pages as read, and local reminders repeat at configured times until the target is met. Progress and settings remain on-device.
 - An offline zakat savings calculator uses a transparent 85-gram gold nisab and 2.5% profile; gold price and its source/date are user-entered, and eligibility requires explicit haul/ownership confirmation. Users can explicitly save up to 50 local results or share a text summary.
-- Kajian now has long-form and vertical Shorts tabs, title/channel/theme search, editorial category filters, saved videos, and video sharing. Only approved Supabase rows appear; the latest approved catalog is cached on-device for offline browsing.
+- Kajian now has long-form and vertical Shorts tabs, title/channel/theme search, saved videos, and video sharing. Only approved Supabase rows appear; the latest approved catalog is cached on-device for offline browsing.
 - Video playback uses YouTube's embedded IFrame player in Android WebView. Playback starts only after the user taps Play, pauses when the app leaves the foreground, and keeps YouTube player controls and branding visible.
-- The `supabase/migrations/202610140001_kajian_videos.sql` migration defines the public, read-only catalog table. Pending/rejected rows stay hidden by row-level security; `content_type` is an editorial field (`kajian` or `short`), not inferred from duration.
+- The `supabase/migrations/202610140001_kajian_videos.sql` migration defines the public, read-only catalog table. Pending/rejected rows stay hidden by row-level security; the ingestion worker classifies videos shorter than five minutes as Shorts and longer videos as Kajian.
 - Migration 202610160001_kajian_ingestion_settings.sql adds admin-managed channel/playlist sources, schedules/run history, and public Android feed settings. Admin changes use authenticated RLS; ingestion credentials stay in GitHub Actions secrets.
 - No Quran.com API or GitHub Raw request is used by this starter.
 
@@ -43,7 +43,7 @@ The current build uses Android Gradle Plugin 8.13.1, Kotlin 2.2.10, Compose BOM 
 
 ## Current boundary
 
-This is the first implementation slice, not yet the complete PRD. Quran text/translation/search packages, audio playback, tafsir, prayer modules, other zakat categories, full tracker, account sync, and remaining release requirements remain to be implemented. Kajian playback and Android catalog are implemented; the admin panel manages ingestion sources/schedule and public app feed. New rows remain pending until an editor verifies and approves them. Workflow polls settings every 15 minutes; GitHub queue delays can shift start time. Verse actions are wired visually; bookmark/share work, while audio and translation packages are not included. The Quran reader uses its CDN image/layout pair without Quran.com, Quran Foundation, or GitHub Raw runtime APIs. Supabase auth/sync is not wired yet. Bundled surah names need editorial review. Reading reminders use Android inexact idle alarms and may be delayed by battery policies. Zakat savings excludes asset aggregation/debt deductions and needs fiqh reviewer approval before public release.
+This is not yet the complete PRD. Quran content, prayer modules, zakat categories, tracker, account sync, and release requirements continue to evolve. Kajian admin manages ingestion sources, schedule, archive backfill, review defaults, and public app feed. New videos follow the configured pending/auto-approve setting; the app shows approved videos only. The workflow polls settings every 15 minutes, though GitHub queue delays can shift start time. Verse bookmarks and sharing work; Quran audio and translation packages are not included. The Quran reader uses its CDN image/layout pair without Quran.com, Quran Foundation, or GitHub Raw runtime APIs. Supabase account sync is not wired yet. Bundled surah names need editorial review. Reading reminders use Android inexact idle alarms and may be delayed by battery policies. Zakat calculations need fiqh reviewer approval before public release.
 
 To connect the catalog on this machine, `local.properties` is gitignored and can contain:
 
@@ -54,18 +54,9 @@ dailySunnahSupabasePublishableKey=YOUR_SUPABASE_PUBLISHABLE_KEY
 
 The app sends the publishable key in the `apikey` header. RLS allows clients to read approved rows only. Never put a Supabase secret key in the Android app.
 
-The scheduled ingestion job reads active sources from Supabase table kajian_sources. The migration seeds the two existing playlists: Riyaadhus Shaalihiin | BAB 51 (kajian) and VIDEO PENDEK RAMADHAN 1445H (Shorts). Channel sources resolve to their YouTube uploads playlist. Each source supplies default category/type for new videos; existing editorial decisions survive metadata refresh. New rows are pending until approved. config/kajian-sources.json remains a historical seed reference; the worker no longer reads it.
+The scheduled ingestion job reads active channel and playlist sources from Supabase `kajian_sources`, managed in Kajian Admin. Channel handles resolve to their official uploads playlist. The daily sync follows each source's `max_videos` setting; archive backfill retrieves older videos in resumable batches without changing the daily schedule. Existing video IDs are updated instead of duplicated, and existing review decisions survive metadata refresh. New-video review behavior follows the admin's pending or auto-approve setting.
 
-Manage channel/playlist sources, schedule, and feed settings from the Kajian Admin panel. Short is an editorial decision, not inferred from duration:
-
-```json
-[
-  { "playlist_id": "YOUTUBE_PLAYLIST_ID", "category": "Fiqih", "content_type": "kajian" },
-  { "playlist_id": "YOUTUBE_SHORTS_PLAYLIST_ID", "category": "Akidah", "content_type": "short" }
-]
-```
-
-Set GitHub Actions secrets YOUTUBE_DATA_API_KEY, SUPABASE_URL, and SUPABASE_SECRET_KEY. The workflow polls every 15 minutes and runs only when the configured schedule is due or an admin requested a run. Repository workflow_dispatch forces an operational run. Worker logs status/counts to Supabase, imports new videos as pending, refreshes metadata, and removes unavailable/non-embeddable videos. Android reads kajian_feed_settings and falls back to newest-first if that setting is unavailable. Test the importer with python3 -B -m unittest discover -s tools -p 'test_*.py'.
+Set GitHub Actions secrets `YOUTUBE_DATA_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SECRET_KEY`. The workflow polls every 15 minutes, then runs when the configured schedule is due, an admin requested a run, or a repository `workflow_dispatch` forces a run. Each run logs status and counts to Supabase. Unavailable or non-embeddable videos are removed from the app catalog. Android reads `kajian_feed_settings` and falls back to newest-first if that setting is unavailable. Test the importer with `python3 -B -m unittest discover -s tools -p 'test_*.py'`.
 
 The generated `app/src/main/assets/quran/surah-page-index.json` records the minimum page containing a verse box for each surah in CDN layout v1. Regenerate it with:
 
