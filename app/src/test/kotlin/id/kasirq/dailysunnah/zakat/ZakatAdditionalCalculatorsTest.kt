@@ -26,4 +26,52 @@ class ZakatAdditionalCalculatorsTest {
         assertEquals(BigDecimal("10.0"), result.riceKg)
         assertEquals(BigDecimal("160000"), result.moneyRupiah)
     }
+
+    @Test fun tradeZakatSubtractsShortTermDebtBeforeNisabAndRate() {
+        val result = ZakatTradeCalculator.calculate(
+            cashAndBankRupiah = BigDecimal("100000000"),
+            inventoryRupiah = BigDecimal("50000000"),
+            collectibleReceivablesRupiah = BigDecimal("10000000"),
+            shortTermDebtRupiah = BigDecimal("20000000"),
+            goldPricePerGramRupiah = BigDecimal("1000000"),
+            haulCompleted = true,
+        )
+        assertEquals(BigDecimal("140000000"), result.netAssetsRupiah)
+        assertEquals(ZakatTradeStatus.DUE, result.status)
+        assertEquals(BigDecimal("3500000"), result.dueRupiah)
+    }
+
+    @Test fun tradeZakatDoesNotChargeBelowNisabOrBeforeHaul() {
+        val belowNisab = ZakatTradeCalculator.calculate(
+            BigDecimal("80000000"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+            BigDecimal("1000000"), haulCompleted = true,
+        )
+        assertEquals(ZakatTradeStatus.BELOW_NISAB, belowNisab.status)
+        assertEquals(BigDecimal.ZERO, belowNisab.dueRupiah)
+
+        val haulNotMet = ZakatTradeCalculator.calculate(
+            BigDecimal("90000000"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+            BigDecimal("1000000"), haulCompleted = false,
+        )
+        assertEquals(ZakatTradeStatus.HAUL_NOT_MET, haulNotMet.status)
+    }
+
+    @Test fun agricultureUsesHarvestThresholdAndWateringRateWithoutHaul() {
+        val rainfed = ZakatAgricultureCalculator.calculate(
+            BigDecimal("1000"), AgricultureHarvestBasis.DRY_GRAIN, AgricultureWatering.NATURAL,
+        )
+        assertTrue(rainfed.isDue)
+        assertEquals(BigDecimal("100.00"), rainfed.dueKg)
+
+        val irrigated = ZakatAgricultureCalculator.calculate(
+            BigDecimal("1000"), AgricultureHarvestBasis.DRY_GRAIN, AgricultureWatering.IRRIGATED,
+        )
+        assertEquals(BigDecimal("50.00"), irrigated.dueKg)
+
+        val belowNisab = ZakatAgricultureCalculator.calculate(
+            BigDecimal("519.99"), AgricultureHarvestBasis.CLEANED_RICE, AgricultureWatering.NATURAL,
+        )
+        assertFalse(belowNisab.isDue)
+        assertEquals(BigDecimal.ZERO, belowNisab.dueKg)
+    }
 }

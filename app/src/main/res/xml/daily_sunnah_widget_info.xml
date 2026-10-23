@@ -1,0 +1,11 @@
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="190dp"
+    android:initialLayout="@layout/widget_daily_sunnah"
+    android:previewLayout="@layout/widget_daily_sunnah"
+    android:description="@string/daily_sunnah_widget_description"
+    android:targetCellWidth="4"
+    android:targetCellHeight="3"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

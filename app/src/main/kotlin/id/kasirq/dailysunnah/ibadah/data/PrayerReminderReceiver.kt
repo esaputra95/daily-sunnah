@@ -13,6 +13,8 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import id.kasirq.dailysunnah.MainActivity
+import id.kasirq.dailysunnah.other.AppLanguagePreference
+import id.kasirq.dailysunnah.other.AppSettingsStore
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -21,32 +23,58 @@ class PrayerReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val isTest = intent.action == ACTION_TEST
         val settings = PrayerSettingsStore.read(context)
+        val english = AppSettingsStore(context).language() == AppLanguagePreference.ENGLISH
         if (isTest) {
-            showNotification(context, settings, "Uji pengingat shalat", "Ini contoh notifikasi. Waktu shalat dihitung dari lokasi presisi.", TEST_NOTIFICATION_ID)
+            showNotification(
+                context,
+                settings,
+                if (english) "Prayer reminder test" else "Uji pengingat shalat",
+                if (english) "This is a sample notification. Prayer times are calculated from your precise location." else "Ini contoh notifikasi. Waktu shalat dihitung dari lokasi presisi.",
+                TEST_NOTIFICATION_ID,
+                english,
+            )
             return
         }
 
         val prayerName = intent.getStringExtra(EXTRA_PRAYER)?.let { runCatching { PrayerName.valueOf(it) }.getOrNull() }
         val preparation = intent.getBooleanExtra(EXTRA_PREPARATION, false)
         if (prayerName != null && settings.notificationFor(prayerName)) {
-            val title = if (preparation) "Persiapan shalat ${prayerName.label}" else "Waktu shalat ${prayerName.label}"
-            val body = if (preparation) "${settings.preparationMinutes} menit lagi menuju waktu ${prayerName.label}." else "Waktu ${prayerName.label} telah tiba."
-            showNotification(context, settings, title, body, NOTIFICATION_ID + prayerName.ordinal)
+            val prayerLabel = if (english) prayerName.englishLabel else prayerName.label
+            val title = if (english) {
+                if (preparation) "Get ready for $prayerLabel" else "$prayerLabel prayer time"
+            } else {
+                if (preparation) "Persiapan shalat $prayerLabel" else "Waktu shalat $prayerLabel"
+            }
+            val body = if (english) {
+                if (preparation) "Prayer time begins in ${settings.preparationMinutes} minutes." else "It is time for $prayerLabel prayer."
+            } else {
+                if (preparation) "${settings.preparationMinutes} menit lagi menuju waktu $prayerLabel." else "Waktu $prayerLabel telah tiba."
+            }
+            showNotification(context, settings, title, body, NOTIFICATION_ID + prayerName.ordinal, english)
         }
         PrayerReminderScheduler.scheduleNext(context)
     }
 
-    private fun showNotification(context: Context, settings: PrayerSettings, title: String, message: String, notificationId: Int) {
+    private fun showNotification(context: Context, settings: PrayerSettings, title: String, message: String, notificationId: Int, english: Boolean) {
         if (Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = channelId(settings.soundMode)
-        if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(channelId) == null) {
-            val channel = NotificationChannel(channelId, "Pengingat shalat · ${settings.soundMode.label}", NotificationManager.IMPORTANCE_DEFAULT)
+        if (Build.VERSION.SDK_INT >= 26) {
+            val soundModeLabel = if (english) when (settings.soundMode) {
+                PrayerSoundMode.ADHAN -> "Adhan"
+                PrayerSoundMode.SHORT -> "Short"
+                PrayerSoundMode.SILENT -> "Silent"
+            } else settings.soundMode.label
+            val channel = NotificationChannel(
+                channelId,
+                if (english) "Prayer reminders · $soundModeLabel" else "Pengingat shalat · $soundModeLabel",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            )
                 .apply {
-                    description = "Jadwal shalat dan pengingat persiapan"
+                    description = if (english) "Prayer times and preparation reminders" else "Jadwal shalat dan pengingat persiapan"
                     when (settings.soundMode) {
                         PrayerSoundMode.ADHAN -> setSound(
                             RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),

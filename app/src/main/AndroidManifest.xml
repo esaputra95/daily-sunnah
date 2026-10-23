@@ -8,6 +8,8 @@
     <application
         android:allowBackup="false"
         android:label="Daily Sunnah"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
@@ -30,6 +32,17 @@
             android:enabled="true"
             android:exported="false" />
         <receiver
+            android:name=".home.DailySunnahWidgetProvider"
+            android:exported="true"
+            android:label="Daily Sunnah">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/daily_sunnah_widget_info" />
+        </receiver>
+        <receiver
             android:name=".ibadah.data.PrayerReminderReceiver"
             android:enabled="true"
             android:exported="false" />
@@ -47,6 +60,21 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".ibadah.data.RamadanReminderScheduler$RamadanReminderReceiver"
+            android:enabled="true"
+            android:exported="false" />
+        <receiver
+            android:name=".ibadah.data.RamadanReminderScheduler$RamadanReminderBootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>

@@ -11,6 +11,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import id.kasirq.dailysunnah.MainActivity
+import id.kasirq.dailysunnah.other.AppLanguagePreference
+import id.kasirq.dailysunnah.other.AppSettingsStore
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -26,8 +28,15 @@ class SunnahFastingReminderReceiver : BroadcastReceiver() {
     private fun showReminder(context: Context) {
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(CHANNEL_ID) == null) {
-            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Pengingat puasa sunnah", NotificationManager.IMPORTANCE_DEFAULT))
+        val english = AppSettingsStore(context).language() == AppLanguagePreference.ENGLISH
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    if (english) "Sunnah fasting reminder" else "Pengingat puasa sunnah",
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ),
+            )
         }
         val open = PendingIntent.getActivity(
             context, 7201, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -35,8 +44,8 @@ class SunnahFastingReminderReceiver : BroadcastReceiver() {
         )
         val notification = android.app.Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
-            .setContentTitle("Pengingat puasa sunnah")
-            .setContentText("Besok Senin/Kamis. Periksa kalender dan kondisi pribadi sebelum berpuasa.")
+            .setContentTitle(if (english) "Sunnah fasting reminder" else "Pengingat puasa sunnah")
+            .setContentText(if (english) "Tomorrow is Monday/Thursday. Check your calendar and personal circumstances before fasting." else "Besok Senin/Kamis. Periksa kalender dan kondisi pribadi sebelum berpuasa.")
             .setContentIntent(open).setAutoCancel(true).build()
         manager.notify(NOTIFICATION_ID, notification)
     }

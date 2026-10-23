@@ -13,13 +13,13 @@ import kotlin.math.tan
 import kotlin.math.acos
 import kotlin.math.roundToLong
 
-enum class PrayerName(val label: String) {
-    SUBUH("Subuh"),
-    TERBIT("Terbit"),
-    DZUHUR("Dzuhur"),
-    ASHAR("Ashar"),
-    MAGHRIB("Maghrib"),
-    ISYA("Isya"),
+enum class PrayerName(val label: String, val englishLabel: String) {
+    SUBUH("Subuh", "Fajr"),
+    TERBIT("Terbit", "Sunrise"),
+    DZUHUR("Dzuhur", "Dhuhr"),
+    ASHAR("Ashar", "Asr"),
+    MAGHRIB("Maghrib", "Maghrib"),
+    ISYA("Isya", "Isha"),
 }
 
 data class PrayerEvent(val name: PrayerName, val dateTime: LocalDateTime)

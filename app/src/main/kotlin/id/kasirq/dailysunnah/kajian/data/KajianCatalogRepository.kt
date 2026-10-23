@@ -12,7 +12,7 @@ import java.time.Duration
 class KajianCatalogRepository(context: Context) {
     private val preferences = context.getSharedPreferences("kajian_catalog", Context.MODE_PRIVATE)
 
-    fun load(channelName: String? = null): KajianCatalogSnapshot {
+    fun load(channelName: String? = null, searchQuery: String? = null): KajianCatalogSnapshot {
         val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
         val publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
         if (baseUrl.isBlank() || publishableKey.isBlank()) {
@@ -26,31 +26,102 @@ class KajianCatalogRepository(context: Context) {
             if (channelResult.isSuccess) cacheChannels(channels)
             val feedSettings = runCatching { fetchFeedSettings(baseUrl, publishableKey) }
                 .getOrDefault(KajianFeedSettings.DEFAULT)
-            val endpoint = buildCatalogEndpoint(baseUrl, feedSettings, channelName)
-            val connection = (URL(endpoint.toString()).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 7_000
-                readTimeout = 10_000
-                setRequestProperty("apikey", publishableKey)
-                setRequestProperty("Accept", "application/json")
-            }
-            try {
-                val code = connection.responseCode
-                if (code !in 200..299) error("Katalog kajian belum dapat dimuat (HTTP $code).")
-                val body = connection.inputStream.bufferedReader().use { it.readText() }
-                val videos = applyFeedSettings(parseVideos(body), feedSettings)
+            val body = fetchCatalogPage(baseUrl, publishableKey, feedSettings, channelName, searchQuery, offset = 0)
+            val pageRowCount = JSONArray(body).length()
+            val videos = applyFeedSettings(parseVideos(body), feedSettings)
+            if (searchQuery.isNullOrBlank()) {
                 preferences.edit()
                     .putString(cacheKey(KEY_CACHE, channelName), body)
                     .putString(cacheKey(KEY_FEED_SETTINGS, channelName), serializeFeedSettings(feedSettings))
                     .putLong(cacheKey(KEY_CACHED_AT, channelName), System.currentTimeMillis())
                     .apply()
-                KajianCatalogSnapshot(videos = videos, isCached = false, feedSettings = feedSettings, channels = channels)
-            } finally {
-                connection.disconnect()
             }
+            KajianCatalogSnapshot(
+                videos = videos,
+                isCached = false,
+                feedSettings = feedSettings,
+                channels = channels,
+                hasMore = pageRowCount == PAGE_SIZE,
+                nextOffset = pageRowCount,
+            )
         }.getOrElse { error ->
             cachedSnapshot(error.message ?: "Katalog tidak dapat dimuat.", channelName)
         }
+    }
+
+    fun loadNextPage(
+        channelName: String?,
+        searchQuery: String?,
+        offset: Int,
+        feedSettings: KajianFeedSettings,
+    ): KajianCatalogPage {
+        val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
+        val publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
+        if (baseUrl.isBlank() || publishableKey.isBlank()) {
+            return KajianCatalogPage(emptyList(), hasMore = false, nextOffset = offset, message = "Katalog belum dikonfigurasi.")
+        }
+
+        return runCatching {
+            require(baseUrl.startsWith("https://")) { "Supabase harus menggunakan HTTPS." }
+            val body = fetchCatalogPage(baseUrl, publishableKey, feedSettings, channelName, searchQuery, offset)
+            val pageRowCount = JSONArray(body).length()
+            val videos = applyFeedSettings(parseVideos(body), feedSettings)
+            if (searchQuery.isNullOrBlank()) cacheCatalogPage(body, channelName, offset, feedSettings)
+            KajianCatalogPage(
+                videos = videos,
+                hasMore = pageRowCount == PAGE_SIZE,
+                nextOffset = offset + pageRowCount,
+            )
+        }.getOrElse { error ->
+            KajianCatalogPage(emptyList(), hasMore = true, nextOffset = offset, message = error.message ?: "Halaman berikutnya gagal dimuat.")
+        }
+    }
+
+    private fun fetchCatalogPage(
+        baseUrl: String,
+        publishableKey: String,
+        settings: KajianFeedSettings,
+        channelName: String?,
+        searchQuery: String?,
+        offset: Int,
+    ): String {
+        val endpoint = buildCatalogEndpoint(baseUrl, settings, channelName, searchQuery, offset)
+        val connection = (URL(endpoint.toString()).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 7_000
+            readTimeout = 10_000
+            setRequestProperty("apikey", publishableKey)
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) error("Katalog kajian belum dapat dimuat (HTTP $code).")
+            return connection.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun cacheCatalogPage(body: String, channelName: String?, offset: Int, feedSettings: KajianFeedSettings) {
+        val key = cacheKey(KEY_CACHE, channelName)
+        val merged = if (offset == 0) {
+            JSONArray(body)
+        } else {
+            val rows = runCatching { JSONArray(preferences.getString(key, "[]") ?: "[]") }.getOrDefault(JSONArray())
+            val seenIds = mutableSetOf<String>()
+            for (index in 0 until rows.length()) seenIds += rows.optJSONObject(index)?.optString("youtube_video_id").orEmpty()
+            val pageRows = JSONArray(body)
+            for (index in 0 until pageRows.length()) {
+                val row = pageRows.optJSONObject(index) ?: continue
+                if (seenIds.add(row.optString("youtube_video_id"))) rows.put(row)
+            }
+            rows
+        }
+        preferences.edit()
+            .putString(key, merged.toString())
+            .putString(cacheKey(KEY_FEED_SETTINGS, channelName), serializeFeedSettings(feedSettings))
+            .putLong(cacheKey(KEY_CACHED_AT, channelName), System.currentTimeMillis())
+            .apply()
     }
 
     fun savedVideoIds(): Set<String> = preferences.getStringSet(KEY_SAVED, emptySet()).orEmpty().toSet()
@@ -77,6 +148,49 @@ class KajianCatalogRepository(context: Context) {
         if (youtubeId in updated) savedVideos.put(youtubeId, videoToJson(video)) else savedVideos.remove(youtubeId)
         preferences.edit().putStringSet(KEY_SAVED, updated).putString(KEY_SAVED_VIDEOS, savedVideos.toString()).apply()
         return updated
+    }
+
+    fun playbackHistory(): List<KajianVideo> = readPersonalVideos(KEY_HISTORY)
+
+    fun queuedVideos(): List<KajianVideo> = readPersonalVideos(KEY_QUEUE)
+
+    @Synchronized
+    fun recordPlayback(video: KajianVideo) {
+        val updated = (listOf(video) + playbackHistory().filterNot { it.youtubeId == video.youtubeId }).take(MAX_HISTORY)
+        writePersonalVideos(KEY_HISTORY, updated)
+    }
+
+    @Synchronized
+    fun addToQueue(video: KajianVideo): List<KajianVideo> {
+        val updated = (queuedVideos().filterNot { it.youtubeId == video.youtubeId } + video).take(MAX_QUEUE)
+        writePersonalVideos(KEY_QUEUE, updated)
+        return updated
+    }
+
+    @Synchronized
+    fun removeFromQueue(youtubeId: String): List<KajianVideo> {
+        val updated = queuedVideos().filterNot { it.youtubeId == youtubeId }
+        writePersonalVideos(KEY_QUEUE, updated)
+        return updated
+    }
+
+    @Synchronized
+    fun clearPlaybackHistory() = writePersonalVideos(KEY_HISTORY, emptyList())
+
+    private fun readPersonalVideos(key: String): List<KajianVideo> {
+        val rows = runCatching { JSONArray(preferences.getString(key, "[]") ?: "[]") }.getOrNull() ?: return emptyList()
+        return buildList {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                videoFromJson(row.optString("youtube_video_id"), row)?.let(::add)
+            }
+        }
+    }
+
+    private fun writePersonalVideos(key: String, videos: List<KajianVideo>) {
+        val rows = JSONArray()
+        videos.forEach { video -> rows.put(videoToJson(video).put("youtube_video_id", video.youtubeId)) }
+        preferences.edit().putString(key, rows.toString()).apply()
     }
 
     private fun videoToJson(video: KajianVideo): JSONObject = JSONObject()
@@ -161,12 +275,18 @@ class KajianCatalogRepository(context: Context) {
         }
     }
 
-    private fun buildCatalogEndpoint(baseUrl: String, settings: KajianFeedSettings, channelName: String?): Uri {
+    private fun buildCatalogEndpoint(
+        baseUrl: String,
+        settings: KajianFeedSettings,
+        channelName: String?,
+        searchQuery: String?,
+        offset: Int,
+    ): Uri {
         val order = when (settings.sortOrder) {
-            "oldest" -> "published_at.asc.nullslast"
-            "duration_desc" -> "duration_seconds.desc.nullslast"
-            "duration_asc" -> "duration_seconds.asc.nullslast"
-            else -> "published_at.desc.nullslast"
+            "oldest" -> "published_at.asc.nullslast,youtube_video_id.asc"
+            "duration_desc" -> "duration_seconds.desc.nullslast,youtube_video_id.asc"
+            "duration_asc" -> "duration_seconds.asc.nullslast,youtube_video_id.asc"
+            else -> "published_at.desc.nullslast,youtube_video_id.asc"
         }
         val builder = Uri.parse("$baseUrl/rest/v1/kajian_videos").buildUpon()
             .appendQueryParameter(
@@ -175,11 +295,20 @@ class KajianCatalogRepository(context: Context) {
             )
             .appendQueryParameter("review_status", "eq.approved")
             .appendQueryParameter("order", order)
+            .appendQueryParameter("limit", PAGE_SIZE.toString())
+            .appendQueryParameter("offset", offset.coerceAtLeast(0).toString())
         if (settings.contentTypes.size == 1) {
             builder.appendQueryParameter("content_type", "eq.${settings.contentTypes.first().apiValue}")
         }
         channelName?.takeIf(String::isNotBlank)?.let {
             builder.appendQueryParameter("channel_name", "eq.$it")
+        }
+        searchQuery?.let(::safeSearchTerm)?.takeIf(String::isNotBlank)?.let { term ->
+            val pattern = "*$term*"
+            builder.appendQueryParameter(
+                "or",
+                "(title.ilike.$pattern,channel_name.ilike.$pattern,category.ilike.$pattern,description.ilike.$pattern)",
+            )
         }
         val durationFilters = buildList {
             settings.minDurationSeconds?.let { add("duration_seconds.gte.$it") }
@@ -191,6 +320,11 @@ class KajianCatalogRepository(context: Context) {
         }
         return builder.build()
     }
+
+    private fun safeSearchTerm(query: String): String = query
+        .filter { it.isLetterOrDigit() || it.isWhitespace() }
+        .trim()
+        .replace(Regex("\\s+"), " ")
 
     private fun cachedSnapshot(message: String, channelName: String? = null): KajianCatalogSnapshot {
         val channelCacheKey = cacheKey(KEY_CACHE, channelName)
@@ -230,6 +364,8 @@ class KajianCatalogRepository(context: Context) {
             message = message,
             feedSettings = settings,
             channels = cachedChannels(),
+            hasMore = false,
+            nextOffset = matchingVideos.size,
         )
     }
 
@@ -312,12 +448,17 @@ class KajianCatalogRepository(context: Context) {
     }
 
     private companion object {
+        const val KEY_HISTORY = "playback-history"
+        const val KEY_QUEUE = "playback-queue"
+        const val MAX_HISTORY = 50
+        const val MAX_QUEUE = 100
         const val KEY_CACHE = "approved_catalog_json"
         const val KEY_FEED_SETTINGS = "approved_catalog_feed_settings"
         const val KEY_CACHED_AT = "approved_catalog_cached_at"
         const val KEY_SAVED = "saved_video_ids"
         const val KEY_SAVED_VIDEOS = "saved_video_metadata"
         const val KEY_CHANNELS = "approved_video_channels"
+        const val PAGE_SIZE = 30
         val YOUTUBE_ID = Regex("^[A-Za-z0-9_-]{11}$")
     }
 }

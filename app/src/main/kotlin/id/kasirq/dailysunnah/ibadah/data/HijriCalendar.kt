@@ -24,14 +24,21 @@ private val hijriMonthNames = listOf(
     "Muharram", "Safar", "Rabiulawal", "Rabiulakhir", "Jumadilawal", "Jumadilakhir",
     "Rajab", "Syakban", "Ramadan", "Syawal", "Zulkaidah", "Zulhijah",
 )
+private val hijriMonthNamesEnglish = listOf(
+    "Muharram", "Safar", "Rabi‘ al-Awwal", "Rabi‘ al-Thani", "Jumada al-Awwal", "Jumada al-Thani",
+    "Rajab", "Sha‘ban", "Ramadan", "Shawwal", "Dhu al-Qi‘dah", "Dhu al-Hijjah",
+)
 
-fun hijriLabel(date: LocalDate, offsetDays: Int = 0): String {
+fun hijriLabel(date: LocalDate, offsetDays: Int = 0, english: Boolean = false): String {
     val hijri = HijrahDate.from(date.plusDays(offsetDays.toLong()))
-    return "${hijri.get(ChronoField.DAY_OF_MONTH)} ${hijriMonthNames[hijri.get(ChronoField.MONTH_OF_YEAR) - 1]} ${hijri.get(ChronoField.YEAR)} H"
+    val names = if (english) hijriMonthNamesEnglish else hijriMonthNames
+    return "${hijri.get(ChronoField.DAY_OF_MONTH)} ${names[hijri.get(ChronoField.MONTH_OF_YEAR) - 1]} ${hijri.get(ChronoField.YEAR)} ${if (english) "AH" else "H"}"
 }
 
-fun hijriMonthLabel(year: Int, month: Int): String =
-    "${hijriMonthNames[month - 1]} $year H"
+fun hijriMonthLabel(year: Int, month: Int, english: Boolean = false): String {
+    val names = if (english) hijriMonthNamesEnglish else hijriMonthNames
+    return "${names[month - 1]} $year ${if (english) "AH" else "H"}"
+}
 
 fun hijriDateFor(year: Int, month: Int, day: Int): HijrahDate = HijrahDate.of(year, month, day)
 

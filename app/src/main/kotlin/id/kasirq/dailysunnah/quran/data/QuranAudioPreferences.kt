@@ -2,10 +2,10 @@ package id.kasirq.dailysunnah.quran.data
 
 import android.content.Context
 
-enum class QuranAudioEndBehavior(val title: String, val description: String) {
-    REPEAT("Ulangi ayat", "Ayat yang sama diputar lagi."),
-    NEXT_AYAH("Lanjut ayat", "Putar ayat berikutnya secara berurutan."),
-    STOP("Berhenti", "Audio berhenti setelah ayat selesai."),
+enum class QuranAudioEndBehavior(val title: String, val description: String, val englishTitle: String, val englishDescription: String) {
+    REPEAT("Ulangi ayat", "Ayat yang sama diputar lagi.", "Repeat verse", "Play the same verse again."),
+    NEXT_AYAH("Lanjut ayat", "Putar ayat berikutnya secara berurutan.", "Next verse", "Continue with the next verse."),
+    STOP("Berhenti", "Audio berhenti setelah ayat selesai.", "Stop", "Stop audio when the verse ends."),
 }
 
 data class QuranReciter(val id: Int, val name: String)

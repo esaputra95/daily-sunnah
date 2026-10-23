@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,7 +34,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,7 +51,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -59,14 +70,17 @@ import id.kasirq.dailysunnah.ibadah.data.PrayerEvent
 import id.kasirq.dailysunnah.ibadah.data.PrayerLocationStore
 import id.kasirq.dailysunnah.ibadah.data.PrayerName
 import id.kasirq.dailysunnah.ibadah.data.PrayerReminderScheduler
+import id.kasirq.dailysunnah.ibadah.data.RamadanReminderScheduler
 import id.kasirq.dailysunnah.ibadah.data.PrayerSettingsStore
+import id.kasirq.dailysunnah.home.DailySunnahWidgetProvider
 import id.kasirq.dailysunnah.ibadah.data.PrayerTimesCalculator
 import id.kasirq.dailysunnah.ibadah.data.formatPrayerTime
 import id.kasirq.dailysunnah.ibadah.data.formatTimeUntil
 import id.kasirq.dailysunnah.ibadah.data.hijriDateFor
-import id.kasirq.dailysunnah.ibadah.data.hijriLabel
 import id.kasirq.dailysunnah.ibadah.data.hijriMonthLabel
 import id.kasirq.dailysunnah.ibadah.data.localDateForHijri
+import id.kasirq.dailysunnah.ui.BackNavigationButton
+import id.kasirq.dailysunnah.ui.LocalAppEnglish
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.chrono.HijrahDate
@@ -76,7 +90,8 @@ import kotlinx.coroutines.launch
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun IbadahScreen(onOpenSettings: () -> Unit = {}) {
+fun IbadahScreen(onOpenSettings: () -> Unit = {}, onOpenCalendar: () -> Unit = {}, onOpenQuran: () -> Unit = {}) {
+    val english = LocalAppEnglish.current
     val context = LocalContext.current
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     var coordinates by remember { mutableStateOf(PrayerLocationStore.read(context)) }
@@ -88,21 +103,24 @@ fun IbadahScreen(onOpenSettings: () -> Unit = {}) {
     var hijriOffset by remember { mutableIntStateOf(HijriCalendarPreferences.offsetDays(context)) }
     var prayerSettings by remember { mutableStateOf(PrayerSettingsStore.read(context)) }
     val scope = rememberCoroutineScope()
-    val tabPagerState = rememberPagerState(pageCount = { 5 })
+    val topBarScrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val tabPagerState = rememberPagerState(pageCount = { 6 })
 
     fun refreshLocation() {
         isRefreshing = true
-        locationMessage = "Mencari posisi perangkat…"
+        locationMessage = if (english) "Finding device location…" else "Mencari posisi perangkat…"
         PrecisePrayerLocationProvider.refresh(
             context = context.applicationContext,
             onLocation = { result ->
                 coordinates = result
+                DailySunnahWidgetProvider.updateAll(context)
                 locationMessage = null
                 isRefreshing = false
                 PrayerReminderScheduler.scheduleNext(context)
+                RamadanReminderScheduler.scheduleNext(context)
             },
             onFailure = { error ->
-                locationMessage = error
+                locationMessage = if (english) "Could not get your precise location. Check location permission and GPS." else error
                 isRefreshing = false
             },
         )
@@ -114,7 +132,7 @@ fun IbadahScreen(onOpenSettings: () -> Unit = {}) {
         if (hasPrecisePermission) {
             locationMessage = null
         } else {
-            locationMessage = "Izinkan lokasi presisi agar waktu shalat dihitung dari posisi perangkat, bukan perkiraan kota."
+            locationMessage = if (english) "Allow precise location so prayer times use your device coordinates." else "Izinkan lokasi presisi agar waktu shalat dihitung dari posisi perangkat, bukan perkiraan kota."
         }
     }
 
@@ -137,26 +155,35 @@ fun IbadahScreen(onOpenSettings: () -> Unit = {}) {
     }
     val afterMaghrib = prayerDay?.event(PrayerName.MAGHRIB)?.dateTime?.let { now >= it } == true
     val hijriCalendarDate = now.toLocalDate().plusDays(if (afterMaghrib) 1 else 0)
-    val currentHijri = remember(hijriCalendarDate, hijriOffset) {
-        hijriLabel(hijriCalendarDate, hijriOffset)
-    }
-
     Scaffold(
+        modifier = Modifier.nestedScroll(topBarScrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Ibadah", fontWeight = FontWeight.SemiBold) },
-                actions = { TextButton(onClick = onOpenSettings) { Text("Pengaturan") } },
+                title = { Text(if (english) "Worship" else "Ibadah", fontWeight = FontWeight.SemiBold) },
+                actions = {
+                    IconButton(
+                        onClick = onOpenCalendar,
+                        modifier = Modifier.semantics { contentDescription = if (english) "Open Hijri calendar" else "Buka kalender Hijriah" },
+                    ) { CalendarIcon() }
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.semantics { contentDescription = if (english) "Worship settings" else "Pengaturan ibadah" },
+                    ) { SettingsGearIcon() }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+                scrollBehavior = topBarScrollBehavior,
             )
         },
     ) { insets ->
         Column(modifier = Modifier.fillMaxSize().padding(insets)) {
             ScrollableTabRow(
                 selectedTabIndex = tabPagerState.currentPage,
-                edgePadding = 0.dp,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                containerColor = MaterialTheme.colorScheme.surface,
+                edgePadding = 20.dp,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                listOf("Shalat", "Kiblat", "Dzikir", "Amalan", "Puasa").forEachIndexed { index, label ->
+                (if (english) listOf("Prayer", "Qibla", "Dhikr", "Tracker", "Fasting", "Ramadan") else listOf("Shalat", "Kiblat", "Dzikir", "Amalan", "Puasa", "Ramadan")).forEachIndexed { index, label ->
                     Tab(
                         selected = tabPagerState.currentPage == index,
                         onClick = { scope.launch { tabPagerState.animateScrollToPage(index) } },
@@ -172,16 +199,14 @@ fun IbadahScreen(onOpenSettings: () -> Unit = {}) {
                 Column(
                     modifier = Modifier.fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .padding(bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
                     when (page) {
                         0 -> {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("Jadwal shalat", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                                Text("Dihitung lokal dari koordinat presisi perangkat.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-
+                            NextPrayerCard(nextPrayer, now)
+                            PrayerScheduleCard(prayerDay, now, coordinates, prayerSettings.correctionMinutes)
                             LocationCard(
                                 coordinates = coordinates,
                                 hasPrecisePermission = hasPrecisePermission,
@@ -193,30 +218,13 @@ fun IbadahScreen(onOpenSettings: () -> Unit = {}) {
                                 onRefresh = {
                                     if (hasPrecisePermission) {
                                         isRefreshing = true
-                                        locationMessage = "Mencari posisi perangkat…"
+                                        locationMessage = if (english) "Finding device location…" else "Mencari posisi perangkat…"
                                         PrecisePrayerLocationProvider.refresh(
                                             context.applicationContext,
-                                            onLocation = { coordinates = it; locationMessage = null; isRefreshing = false; PrayerReminderScheduler.scheduleNext(context) },
-                                            onFailure = { locationMessage = it; isRefreshing = false },
+                                            onLocation = { coordinates = it; DailySunnahWidgetProvider.updateAll(context); locationMessage = null; isRefreshing = false; PrayerReminderScheduler.scheduleNext(context); RamadanReminderScheduler.scheduleNext(context) },
+                                            onFailure = { locationMessage = if (english) "Could not get your precise location. Check location permission and GPS." else it; isRefreshing = false },
                                         )
                                     }
-                                },
-                            )
-
-                            NextPrayerCard(nextPrayer, now)
-                            PrayerScheduleCard(prayerDay, now, coordinates, prayerSettings.correctionMinutes)
-
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("Kalender Hijriah", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                                Text(currentHijri, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-                                Text("Kalender Umm al-Qura; tanggal dapat berbeda dari penetapan resmi Indonesia.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            HijriMonthCalendar(
-                                today = hijriCalendarDate,
-                                offsetDays = hijriOffset,
-                                onOffsetChange = { offset ->
-                                    hijriOffset = offset.coerceIn(-2, 2)
-                                    HijriCalendarPreferences.saveOffsetDays(context, hijriOffset)
                                 },
                             )
                             Spacer(Modifier.height(8.dp))
@@ -224,7 +232,15 @@ fun IbadahScreen(onOpenSettings: () -> Unit = {}) {
                         1 -> QiblaScreen(coordinates)
                         2 -> DhikrScreen()
                         3 -> AmalanTrackerScreen()
-                        else -> SunnahFastingScreen()
+                        4 -> SunnahFastingScreen()
+                        else -> RamadanModeScreen(
+                            now = now,
+                            coordinates = coordinates,
+                            correctionMinutes = prayerSettings.correctionMinutes,
+                            hijriDate = hijriCalendarDate,
+                            hijriOffsetDays = hijriOffset,
+                            onOpenQuran = onOpenQuran,
+                        )
                     }
                 }
             }
@@ -233,7 +249,120 @@ fun IbadahScreen(onOpenSettings: () -> Unit = {}) {
 }
 
 @Composable
+private fun CalendarIcon() {
+    val color = MaterialTheme.colorScheme.primary
+    Canvas(Modifier.size(24.dp)) {
+        val stroke = size.minDimension * 0.085f
+        val left = size.width * 0.16f
+        val top = size.height * 0.22f
+        val width = size.width * 0.68f
+        val height = size.height * 0.62f
+        drawRoundRect(color, Offset(left, top), Size(width, height), androidx.compose.ui.geometry.CornerRadius(stroke * 2f), style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+        drawLine(color, Offset(left, size.height * 0.40f), Offset(left + width, size.height * 0.40f), stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.34f, size.height * 0.12f), Offset(size.width * 0.34f, size.height * 0.30f), stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.66f, size.height * 0.12f), Offset(size.width * 0.66f, size.height * 0.30f), stroke, cap = StrokeCap.Round)
+        drawCircle(color, radius = stroke * 0.75f, center = Offset(size.width * 0.36f, size.height * 0.57f))
+        drawCircle(color, radius = stroke * 0.75f, center = Offset(size.width * 0.62f, size.height * 0.57f))
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun HijriCalendarScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val english = LocalAppEnglish.current
+    var now by remember { mutableStateOf(LocalDateTime.now()) }
+    var coordinates by remember { mutableStateOf(PrayerLocationStore.read(context)) }
+    var hijriOffset by remember { mutableIntStateOf(HijriCalendarPreferences.offsetDays(context)) }
+    val prayerSettings = remember { PrayerSettingsStore.read(context) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = LocalDateTime.now()
+            coordinates = PrayerLocationStore.read(context)
+            kotlinx.coroutines.delay(30_000L)
+        }
+    }
+
+    val maghrib = coordinates?.let {
+        PrayerTimesCalculator.calculate(now.toLocalDate(), it.latitude, it.longitude, correctionMinutes = prayerSettings.correctionMinutes)
+            ?.event(PrayerName.MAGHRIB)?.dateTime
+    }
+    val today = now.toLocalDate().plusDays(if (maghrib != null && now >= maghrib) 1 else 0)
+    val todayHijri = remember(today, hijriOffset) { HijrahDate.from(today.plusDays(hijriOffset.toLong())) }
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                navigationIcon = { BackNavigationButton(onClick = onBack) },
+                title = { Text(if (english) "Hijri calendar" else "Kalender Hijriah", fontWeight = FontWeight.SemiBold) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+            )
+        },
+    ) { insets ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.primary,
+            ) {
+                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(if (english) "TODAY IN HIJRI" else "HARI INI DALAM HIJRIAH", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f), letterSpacing = 1.2.sp)
+                    Text("${todayHijri.get(ChronoField.DAY_OF_MONTH)} ${hijriMonthLabel(todayHijri.get(ChronoField.YEAR), todayHijri.get(ChronoField.MONTH_OF_YEAR), english)}", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+                    Text(today.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale.forLanguageTag(if (english) "en-US" else "id-ID"))), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.84f))
+                }
+            }
+            HijriMonthCalendar(
+                today = today,
+                offsetDays = hijriOffset,
+                onOffsetChange = { offset ->
+                    hijriOffset = offset.coerceIn(-2, 2)
+                    HijriCalendarPreferences.saveOffsetDays(context, hijriOffset)
+                    RamadanReminderScheduler.scheduleNext(context)
+                },
+            )
+            Text(
+                if (english) "Based on the Umm al-Qura calendar. Dates may differ from official local moon-sighting announcements." else "Menggunakan kalender Umm al-Qura. Tanggal dapat berbeda dari penetapan resmi berdasarkan rukyat hilal di Indonesia.",
+                modifier = Modifier.padding(horizontal = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun SettingsGearIcon() {
+    val gearColor = MaterialTheme.colorScheme.primary
+    val holeColor = MaterialTheme.colorScheme.surface
+    Canvas(Modifier.size(24.dp)) {
+        val centerPoint = center
+        val outerRadius = size.minDimension * 0.30f
+        val toothWidth = size.minDimension * 0.14f
+        val toothHeight = size.minDimension * 0.16f
+        repeat(8) { index ->
+            rotate(index * 45f, pivot = centerPoint) {
+                drawRoundRect(
+                    color = gearColor,
+                    topLeft = Offset(centerPoint.x - toothWidth / 2f, centerPoint.y - outerRadius - toothHeight),
+                    size = Size(toothWidth, toothHeight),
+                    cornerRadius = CornerRadius(toothWidth * 0.30f),
+                )
+            }
+        }
+        drawCircle(color = gearColor, radius = outerRadius, center = centerPoint)
+        drawCircle(color = holeColor, radius = outerRadius * 0.42f, center = centerPoint)
+    }
+}
+
+@Composable
 private fun NextPrayerCard(nextPrayer: PrayerEvent?, now: LocalDateTime) {
+    val english = LocalAppEnglish.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
@@ -245,19 +374,19 @@ private fun NextPrayerCard(nextPrayer: PrayerEvent?, now: LocalDateTime) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Surface(shape = RoundedCornerShape(14.dp), color = Color.White.copy(alpha = 0.14f)) {
-                Text("☀", modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp), color = Color(0xFFFFD88A), style = MaterialTheme.typography.titleLarge)
+            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.10f)) {
+                Text("☀", modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp), color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.titleLarge)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("SHALAT BERIKUTNYA", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f), letterSpacing = 1.sp)
-                Text(nextPrayer?.name?.label ?: "Jadwal belum tersedia", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(if (english) "NEXT PRAYER" else "SHALAT BERIKUTNYA", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f), letterSpacing = 1.sp)
+                Text(nextPrayer?.name?.let { if (english) it.englishLabel else it.label } ?: if (english) "Schedule unavailable" else "Jadwal belum tersedia", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.SemiBold)
                 Text(
-                    nextPrayer?.let { formatTimeUntil(it.dateTime, now) } ?: "Aktifkan lokasi presisi untuk melihat jadwal.",
+                    nextPrayer?.let { formatTimeUntil(it.dateTime, now) } ?: if (english) "Enable precise location to view prayer times." else "Aktifkan lokasi presisi untuk melihat jadwal.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.86f),
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.86f),
                 )
             }
-            Text(nextPrayer?.let { formatPrayerTime(it.dateTime) } ?: "--:--", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text(nextPrayer?.let { formatPrayerTime(it.dateTime) } ?: "--:--", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -271,14 +400,15 @@ private fun LocationCard(
     onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
 ) {
+    val english = LocalAppEnglish.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = Color(0xFFFFFEFA),
+        color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Lokasi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(if (english) "Location" else "Lokasi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             if (coordinates != null) {
                 Text(
                     "${"%.6f".format(Locale.US, coordinates.latitude)}, ${"%.6f".format(Locale.US, coordinates.longitude)}",
@@ -286,12 +416,13 @@ private fun LocationCard(
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    if (coordinates.accuracyMeters > 0f) "Akurasi perangkat ±${coordinates.accuracyMeters.toInt()} m" else "Akurasi koordinat tidak tersedia",
+                    if (english) { if (coordinates.accuracyMeters > 0f) "Device accuracy ±${coordinates.accuracyMeters.toInt()} m" else "Coordinate accuracy unavailable" }
+                    else if (coordinates.accuracyMeters > 0f) "Akurasi perangkat ±${coordinates.accuracyMeters.toInt()} m" else "Akurasi koordinat tidak tersedia",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                Text("Belum ada koordinat presisi. Jadwal tidak akan memakai lokasi kota perkiraan.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (english) "Precise coordinates are unavailable. Prayer times will not use an approximate city location." else "Belum ada koordinat presisi. Jadwal tidak akan memakai lokasi kota perkiraan.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (message != null) Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             Button(
@@ -303,7 +434,7 @@ private fun LocationCard(
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (hasPrecisePermission) "Perbarui lokasi presisi" else "Aktifkan lokasi presisi")
+                Text(if (english) { if (hasPrecisePermission) "Refresh precise location" else "Enable precise location" } else { if (hasPrecisePermission) "Perbarui lokasi presisi" else "Aktifkan lokasi presisi" })
             }
         }
     }
@@ -316,16 +447,33 @@ private fun PrayerScheduleCard(
     coordinates: PrayerCoordinates?,
     corrections: Map<PrayerName, Int>,
 ) {
+    val english = LocalAppEnglish.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = Color(0xFFFFFEFA),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Hari ini", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(shape = RoundedCornerShape(15.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Text("☼", modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(if (english) "Today" else "Hari ini", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        now.toLocalDate().format(java.time.format.DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.forLanguageTag(if (english) "en-US" else "id-ID"))),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
+                    Text(if (english) "TODAY" else "HARI INI", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Surface(Modifier.fillMaxWidth().height(1.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)) {}
             if (prayerDay == null) {
-                Text("Jadwal tampil setelah lokasi presisi tersedia.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (english) "Schedule appears when precise location is available." else "Jadwal tampil setelah lokasi presisi tersedia.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 val display = listOf(PrayerName.SUBUH, PrayerName.TERBIT, PrayerName.DZUHUR, PrayerName.ASHAR, PrayerName.MAGHRIB, PrayerName.ISYA)
                 val nextPrayer = coordinates?.let {
@@ -333,7 +481,11 @@ private fun PrayerScheduleCard(
                 }
                 display.forEach { name ->
                     val event = prayerDay.event(name) ?: return@forEach
-                    PrayerTimeRow(event, highlighted = nextPrayer?.dateTime == event.dateTime)
+                    PrayerTimeRow(
+                        event = event,
+                        now = now,
+                        highlighted = nextPrayer?.dateTime == event.dateTime,
+                    )
                 }
             }
         }
@@ -341,14 +493,58 @@ private fun PrayerScheduleCard(
 }
 
 @Composable
-private fun PrayerTimeRow(event: PrayerEvent, highlighted: Boolean = false) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+private fun PrayerTimeRow(event: PrayerEvent, now: LocalDateTime, highlighted: Boolean = false) {
+    val english = LocalAppEnglish.current
+    val isPast = !highlighted && event.dateTime.isBefore(now)
+    val accent = when (event.name) {
+        PrayerName.SUBUH -> "☾"
+        PrayerName.TERBIT -> "↗"
+        PrayerName.DZUHUR -> "☀"
+        PrayerName.ASHAR -> "◒"
+        PrayerName.MAGHRIB -> "◐"
+        PrayerName.ISYA -> "☽"
+    }
+    val status = when {
+        highlighted -> if (english) "Next prayer" else "Berikutnya"
+        isPast -> if (english) "Completed" else "Lewat"
+        else -> if (english) "Upcoming" else "Akan datang"
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+        border = if (highlighted) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.32f)) else null,
     ) {
-        Text(event.name.label, style = MaterialTheme.typography.bodyLarge, color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, fontWeight = if (highlighted) FontWeight.SemiBold else FontWeight.Normal)
-        Text(formatPrayerTime(event.dateTime), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Surface(
+                modifier = Modifier.size(42.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (isPast) 0.55f else 1f),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(accent, color = if (highlighted) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    if (english) event.name.englishLabel else event.name.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (isPast) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (highlighted) FontWeight.Bold else FontWeight.SemiBold,
+                )
+                Text(status, style = MaterialTheme.typography.labelSmall, color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                formatPrayerTime(event.dateTime),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+        }
     }
 }
 
@@ -358,6 +554,7 @@ private fun HijriMonthCalendar(
     offsetDays: Int,
     onOffsetChange: (Int) -> Unit,
 ) {
+    val english = LocalAppEnglish.current
     val todayHijri = remember(today, offsetDays) { HijrahDate.from(today.plusDays(offsetDays.toLong())) }
     var visibleYear by remember(offsetDays) { mutableIntStateOf(todayHijri.get(ChronoField.YEAR)) }
     var visibleMonth by remember(offsetDays) { mutableIntStateOf(todayHijri.get(ChronoField.MONTH_OF_YEAR)) }
@@ -369,7 +566,7 @@ private fun HijriMonthCalendar(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = Color(0xFFFFFEFA),
+        color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -377,14 +574,14 @@ private fun HijriMonthCalendar(
                 TextButton(onClick = {
                     if (visibleMonth == 1) { visibleMonth = 12; visibleYear-- } else visibleMonth--
                 }) { Text("‹") }
-                Text(hijriMonthLabel(visibleYear, visibleMonth), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(hijriMonthLabel(visibleYear, visibleMonth, english), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = {
                     if (visibleMonth == 12) { visibleMonth = 1; visibleYear++ } else visibleMonth++
                 }) { Text("›") }
             }
 
             Row(Modifier.fillMaxWidth()) {
-                listOf("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min").forEach { weekday ->
+                (if (english) listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") else listOf("Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min")).forEach { weekday ->
                     Text(weekday, modifier = Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -423,8 +620,8 @@ private fun HijriMonthCalendar(
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Koreksi tanggal", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium)
-                    Text("${if (offsetDays > 0) "+" else ""}$offsetDays hari", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (english) "Date adjustment" else "Koreksi tanggal", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium)
+                    Text(if (english) "${if (offsetDays > 0) "+" else ""}$offsetDays days" else "${if (offsetDays > 0) "+" else ""}$offsetDays hari", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 TextButton(onClick = { onOffsetChange(offsetDays - 1) }, enabled = offsetDays > -2) { Text("−1") }
                 TextButton(onClick = { onOffsetChange(offsetDays + 1) }, enabled = offsetDays < 2) { Text("+1") }

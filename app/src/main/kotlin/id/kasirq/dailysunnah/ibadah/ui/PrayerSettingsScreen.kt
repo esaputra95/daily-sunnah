@@ -27,7 +27,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -44,7 +43,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -55,14 +53,19 @@ import id.kasirq.dailysunnah.ibadah.data.PrayerCoordinates
 import id.kasirq.dailysunnah.ibadah.data.PrayerLocationStore
 import id.kasirq.dailysunnah.ibadah.data.PrayerName
 import id.kasirq.dailysunnah.ibadah.data.PrayerReminderScheduler
+import id.kasirq.dailysunnah.ibadah.data.RamadanReminderScheduler
 import id.kasirq.dailysunnah.ibadah.data.PrayerSettings
 import id.kasirq.dailysunnah.ibadah.data.PrayerSettingsStore
+import id.kasirq.dailysunnah.home.DailySunnahWidgetProvider
 import id.kasirq.dailysunnah.ibadah.data.PrayerSoundMode
+import id.kasirq.dailysunnah.ui.BackNavigationButton
+import id.kasirq.dailysunnah.ui.LocalAppEnglish
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PrayerSettingsScreen(onBack: () -> Unit) {
+    val english = LocalAppEnglish.current
     val context = LocalContext.current
     var settings by remember { mutableStateOf(PrayerSettingsStore.read(context)) }
     var volumeDraft by remember(settings.adhanVolume) { mutableFloatStateOf(settings.adhanVolume.toFloat()) }
@@ -78,17 +81,19 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
 
     fun refreshLocation() {
         isRefreshing = true
-        locationMessage = "Mencari lokasi presisi…"
+        locationMessage = if (english) "Finding precise location…" else "Mencari lokasi presisi…"
         PrecisePrayerLocationProvider.refresh(
             context.applicationContext,
             onLocation = {
                 coordinates = it
-                locationMessage = "Lokasi presisi diperbarui."
+                DailySunnahWidgetProvider.updateAll(context)
+                locationMessage = if (english) "Precise location updated." else "Lokasi presisi diperbarui."
                 isRefreshing = false
                 PrayerReminderScheduler.scheduleNext(context)
+                RamadanReminderScheduler.scheduleNext(context)
             },
             onFailure = {
-                locationMessage = it
+                locationMessage = if (english) "Could not get precise location. Check location permission and GPS." else it
                 isRefreshing = false
             },
         )
@@ -98,14 +103,14 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
         hasPrecisePermission = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (hasPrecisePermission) refreshLocation()
-        else locationMessage = "Izinkan lokasi presisi untuk menghitung jadwal dari koordinat perangkat."
+        else locationMessage = if (english) "Allow precise location to calculate times from your device coordinates." else "Izinkan lokasi presisi untuk menghitung jadwal dari koordinat perangkat."
     }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted && testRequested) {
             PrayerReminderScheduler.scheduleTest(context)
-            testStatus = "Notifikasi uji dijadwalkan dalam 5 detik."
+            testStatus = if (english) "Test notification scheduled in 5 seconds." else "Notifikasi uji dijadwalkan dalam 5 detik."
         } else if (!granted) {
-            testStatus = "Izin notifikasi belum diberikan."
+            testStatus = if (english) "Notification permission was not granted." else "Izin notifikasi belum diberikan."
         }
         testRequested = false
     }
@@ -114,14 +119,16 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
         settings = transform(settings)
         PrayerSettingsStore.save(context, settings)
         PrayerReminderScheduler.scheduleNext(context)
+        RamadanReminderScheduler.scheduleNext(context)
+        DailySunnahWidgetProvider.updateAll(context)
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                navigationIcon = { IconButton(onClick = onBack) { Text("‹", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary) } },
-                title = { Text("Pengaturan Sholat", fontWeight = FontWeight.SemiBold) },
+                navigationIcon = { BackNavigationButton(onClick = onBack) },
+                title = { Text(if (english) "Prayer settings" else "Pengaturan Sholat", fontWeight = FontWeight.SemiBold) },
             )
         },
     ) { insets ->
@@ -129,40 +136,41 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
-            SettingsSection("Metode Perhitungan") {
+            SettingsSection(if (english) "Calculation method" else "Metode Perhitungan") {
                 SettingsCard(onClick = { showMethodInfo = true }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Kemenag/SIHAT Indonesia", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text("Perhitungan lokal dengan parameter Indonesia", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (english) "Indonesia Ministry of Religious Affairs / SIHAT" else "Kemenag/SIHAT Indonesia", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(if (english) "Local calculation using Indonesian parameters" else "Perhitungan lokal dengan parameter Indonesia", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text("›", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
                     }
                 }
-                Text("Direkomendasikan untuk Indonesia. Jadwal dihitung di perangkat menggunakan lokasi presisi.", modifier = Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (english) "Recommended for Indonesia. Times are calculated on-device using precise location." else "Direkomendasikan untuk Indonesia. Jadwal dihitung di perangkat menggunakan lokasi presisi.", modifier = Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            SettingsSection("Mazhab (Waktu Ashar)") {
+            SettingsSection(if (english) "Madhhab (Asr time)" else "Mazhab (Waktu Ashar)") {
                 SettingsCard(enabled = false) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Mazhab Syafi’i", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("Metode Kemenag/SIHAT saat ini memakai parameter Syafi’i.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (english) "Shafi‘i madhhab" else "Mazhab Syafi’i", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (english) "The current calculation uses the Shafi‘i parameter." else "Metode Kemenag/SIHAT saat ini memakai parameter Syafi’i.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text("▣", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                Text("Pilihan mazhab dikunci selama profil Kemenag/SIHAT aktif.", modifier = Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (english) "Madhhab selection is locked while the Kemenag/SIHAT profile is active." else "Pilihan mazhab dikunci selama profil Kemenag/SIHAT aktif.", modifier = Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            SettingsSection("Koreksi Waktu") {
+            SettingsSection(if (english) "Time adjustments" else "Koreksi Waktu") {
                 SettingsCard {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Koreksi waktu sholat", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("Sesuaikan dengan jadwal masjid atau Kemenag setempat. Rentang −5 sampai +5 menit.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (english) "Prayer time adjustments" else "Koreksi waktu sholat", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(if (english) "Match your local mosque or ministry timetable. Range: −5 to +5 minutes." else "Sesuaikan dengan jadwal masjid atau Kemenag setempat. Rentang −5 sampai +5 menit.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         PrayerName.entries.forEach { prayer ->
                             CorrectionRow(
                                 prayer = prayer,
+                                english = english,
                                 value = settings.correctionFor(prayer),
                                 onChange = { value -> updateSettings { current -> current.copy(correctionMinutes = current.correctionMinutes + (prayer to value)) } },
                             )
@@ -170,17 +178,17 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
                         TextButton(
                             onClick = { updateSettings { it.copy(correctionMinutes = PrayerName.entries.associateWith { 0 }) } },
                             modifier = Modifier.align(Alignment.End),
-                        ) { Text("Reset koreksi") }
+                        ) { Text(if (english) "Reset adjustments" else "Reset koreksi") }
                     }
                 }
             }
 
-            SettingsSection("Audio Adzan") {
+            SettingsSection(if (english) "Adhan audio" else "Audio Adzan") {
                 SettingsCard {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Volume adzan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Text(if (english) "Adhan volume" else "Volume adzan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                                 Text("${volumeDraft.toInt()}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Text("◖))", color = MaterialTheme.colorScheme.primary)
@@ -191,20 +199,24 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
                             onValueChangeFinished = { updateSettings { it.copy(adhanVolume = volumeDraft.toInt()) } },
                             valueRange = 0f..100f,
                         )
-                        Text("Audio adzan khusus belum disertakan. Preferensi ini tersimpan untuk pemutarnya; nada notifikasi mengikuti volume Android.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (english) "A separate adhan audio track is not included yet. This preference is saved for the player; notification volume follows Android settings." else "Audio adzan khusus belum disertakan. Preferensi ini tersimpan untuk pemutarnya; nada notifikasi mengikuti volume Android.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
 
-            SettingsSection("Suara Notifikasi") {
+            SettingsSection(if (english) "Notification sound" else "Suara Notifikasi") {
                 SettingsCard {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Mode suara", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("Adzan memakai nada alarm perangkat; Singkat memakai nada notifikasi; Senyap tanpa suara.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (english) "Sound mode" else "Mode suara", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(if (english) "Adhan uses the device alarm tone; Short uses the notification tone; Silent has no sound." else "Adzan memakai nada alarm perangkat; Singkat memakai nada notifikasi; Senyap tanpa suara.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             PrayerSoundMode.entries.forEach { mode ->
                                 ChoiceChip(
-                                    label = mode.label,
+                                    label = if (english) when (mode) {
+                                        PrayerSoundMode.ADHAN -> "Adhan"
+                                        PrayerSoundMode.SHORT -> "Short"
+                                        PrayerSoundMode.SILENT -> "Silent"
+                                    } else mode.label,
                                     selected = settings.soundMode == mode,
                                     modifier = Modifier.weight(1f),
                                     onClick = { updateSettings { it.copy(soundMode = mode) } },
@@ -215,17 +227,17 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            SettingsSection("Pengingat") {
+            SettingsSection(if (english) "Reminders" else "Pengingat") {
                 SettingsCard {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Notifikasi per shalat", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("Pilih waktu shalat yang mengirim pengingat.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (english) "Prayer notifications" else "Notifikasi per shalat", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(if (english) "Choose which prayers send a reminder." else "Pilih waktu shalat yang mengirim pengingat.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(4.dp))
                         PrayerSettingsStore.notificationNames().forEach { prayer ->
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(prayer.label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                                    Text("${settings.correctionFor(prayer).let { if (it > 0) "+$it" else "$it" }} menit koreksi", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(if (english) prayer.englishLabel else prayer.label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                                    Text(if (english) "${settings.correctionFor(prayer).let { if (it > 0) "+$it" else "$it" }} min adjustment" else "${settings.correctionFor(prayer).let { if (it > 0) "+$it" else "$it" }} menit koreksi", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Switch(
                                     checked = settings.notificationFor(prayer),
@@ -239,21 +251,21 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
                             }
                         }
                         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                            Text("Izin notifikasi diperlukan agar pengingat bisa muncul.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            Text(if (english) "Notification permission is required for reminders." else "Izin notifikasi diperlukan agar pengingat bisa muncul.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                             TextButton(onClick = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
-                                Text("Izinkan notifikasi")
+                                Text(if (english) "Allow notifications" else "Izinkan notifikasi")
                             }
                         }
                     }
                 }
                 SettingsCard {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Pengingat persiapan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("Kirim pengingat sebelum waktu shalat.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (english) "Advance reminder" else "Pengingat persiapan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(if (english) "Send a reminder before prayer time." else "Kirim pengingat sebelum waktu shalat.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             listOf(0, 5, 10, 15).forEach { minutes ->
                                 ChoiceChip(
-                                    label = if (minutes == 0) "Mati" else "$minutes mnt",
+                                    label = if (minutes == 0) { if (english) "Off" else "Mati" } else if (english) "$minutes min" else "$minutes mnt",
                                     selected = settings.preparationMinutes == minutes,
                                     modifier = Modifier.weight(1f),
                                     onClick = { updateSettings { it.copy(preparationMinutes = minutes) } },
@@ -271,24 +283,24 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
                             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         } else {
                             PrayerReminderScheduler.scheduleTest(context)
-                            testStatus = "Notifikasi uji dijadwalkan dalam 5 detik."
+                            testStatus = if (english) "Test notification scheduled in 5 seconds." else "Notifikasi uji dijadwalkan dalam 5 detik."
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                ) { Text("Uji notifikasi adzan (5 detik)", fontWeight = FontWeight.SemiBold) }
+                ) { Text(if (english) "Test adhan notification (5 seconds)" else "Uji notifikasi adzan (5 detik)", fontWeight = FontWeight.SemiBold) }
                 if (testStatus != null) Text(testStatus!!, modifier = Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
 
-            SettingsSection("Lokasi") {
+            SettingsSection(if (english) "Location" else "Lokasi") {
                 SettingsCard {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (coordinates != null) {
-                            Text("Koordinat presisi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(if (english) "Precise coordinates" else "Koordinat presisi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Text("${"%.6f".format(Locale.US, coordinates!!.latitude)}, ${"%.6f".format(Locale.US, coordinates!!.longitude)}", style = MaterialTheme.typography.bodyLarge)
-                            Text(if (coordinates!!.accuracyMeters > 0f) "Akurasi ±${coordinates!!.accuracyMeters.toInt()} m" else "Koordinat tersimpan di perangkat", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (english) { if (coordinates!!.accuracyMeters > 0f) "Accuracy ±${coordinates!!.accuracyMeters.toInt()} m" else "Coordinates stored on device" } else if (coordinates!!.accuracyMeters > 0f) "Akurasi ±${coordinates!!.accuracyMeters.toInt()} m" else "Koordinat tersimpan di perangkat", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
-                            Text("Lokasi presisi belum tersedia", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(if (english) "Precise location unavailable" else "Lokasi presisi belum tersedia", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         }
                         if (locationMessage != null) Text(locationMessage!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Button(
@@ -301,7 +313,7 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
                                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                                 Spacer(Modifier.width(8.dp))
                             }
-                            Text(if (hasPrecisePermission) "Perbarui lokasi presisi" else "Izinkan lokasi presisi")
+                            Text(if (english) { if (hasPrecisePermission) "Refresh precise location" else "Allow precise location" } else { if (hasPrecisePermission) "Perbarui lokasi presisi" else "Izinkan lokasi presisi" })
                         }
                     }
                 }
@@ -313,9 +325,9 @@ fun PrayerSettingsScreen(onBack: () -> Unit) {
     if (showMethodInfo) {
         AlertDialog(
             onDismissRequest = { showMethodInfo = false },
-            title = { Text("Kemenag/SIHAT Indonesia") },
-            text = { Text("Profil lokal memakai sudut Subuh 20°, Isya 18°, waktu terbit/terbenam −0,833°, dan Ashar Syafi’i. Koreksi manual di bawah diterapkan setelah perhitungan.") },
-            confirmButton = { TextButton(onClick = { showMethodInfo = false }) { Text("Tutup") } },
+            title = { Text(if (english) "Kemenag/SIHAT Indonesia" else "Kemenag/SIHAT Indonesia") },
+            text = { Text(if (english) "The local profile uses a 20° Fajr angle, 18° Isha angle, −0.833° sunrise/sunset angle, and Shafi‘i Asr. Manual adjustments below are applied after calculation." else "Profil lokal memakai sudut Subuh 20°, Isya 18°, waktu terbit/terbenam −0,833°, dan Ashar Syafi’i. Koreksi manual di bawah diterapkan setelah perhitungan.") },
+            confirmButton = { TextButton(onClick = { showMethodInfo = false }) { Text(if (english) "Close" else "Tutup") } },
         )
     }
 }
@@ -338,7 +350,7 @@ private fun SettingsCard(
     Surface(
         modifier = modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier),
         shape = RoundedCornerShape(20.dp),
-        color = if (enabled) Color(0xFFFFFEFA) else Color(0xFFF4F0E7),
+        color = if (enabled) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
     ) {
         Box(Modifier.padding(16.dp)) { content() }
@@ -346,9 +358,9 @@ private fun SettingsCard(
 }
 
 @Composable
-private fun CorrectionRow(prayer: PrayerName, value: Int, onChange: (Int) -> Unit) {
+private fun CorrectionRow(prayer: PrayerName, english: Boolean, value: Int, onChange: (Int) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(prayer.label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+        Text(if (english) prayer.englishLabel else prayer.label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
         SmallAction("−", enabled = value > -5) { onChange(value - 1) }
         Text("${if (value > 0) "+" else ""}$value m", modifier = Modifier.width(48.dp), textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold)
         SmallAction("+", enabled = value < 5) { onChange(value + 1) }

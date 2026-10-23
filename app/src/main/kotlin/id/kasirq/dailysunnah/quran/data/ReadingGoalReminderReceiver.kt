@@ -12,6 +12,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import id.kasirq.dailysunnah.MainActivity
 import id.kasirq.dailysunnah.ibadah.data.PrayerReminderScheduler
+import id.kasirq.dailysunnah.other.AppLanguagePreference
+import id.kasirq.dailysunnah.other.AppSettingsStore
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -35,9 +37,15 @@ class ReadingGoalReminderReceiver : BroadcastReceiver() {
         ) return
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val english = AppSettingsStore(context).language() == AppLanguagePreference.ENGLISH
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Target bacaan Qur’an", NotificationManager.IMPORTANCE_DEFAULT)
-                .apply { description = "Pengingat target bacaan harian yang kamu atur" },
+            NotificationChannel(
+                CHANNEL_ID,
+                if (english) "Qur’an reading goal" else "Target bacaan Qur’an",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = if (english) "Your daily reading goal reminder" else "Pengingat target bacaan harian yang kamu atur"
+            },
         )
         val openApp = PendingIntent.getActivity(
             context,
@@ -47,8 +55,8 @@ class ReadingGoalReminderReceiver : BroadcastReceiver() {
         )
         val notification = android.app.Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
-            .setContentTitle("Target bacaan hari ini belum tercapai")
-            .setContentText("$completed dari $target halaman selesai. Lanjutkan bacaanmu.")
+            .setContentTitle(if (english) "Today’s reading goal is not complete" else "Target bacaan hari ini belum tercapai")
+            .setContentText(if (english) "$completed of $target pages completed. Continue reading." else "$completed dari $target halaman selesai. Lanjutkan bacaanmu.")
             .setContentIntent(openApp)
             .setAutoCancel(true)
             .build()

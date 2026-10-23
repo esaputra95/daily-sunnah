@@ -39,8 +39,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import id.kasirq.dailysunnah.quran.data.QuranSearchRepository
 import id.kasirq.dailysunnah.quran.data.QuranSearchResult
+import id.kasirq.dailysunnah.ui.BackNavigationButton
 import id.kasirq.dailysunnah.ui.ModernTextFieldShape
 import id.kasirq.dailysunnah.ui.modernTextFieldColors
+import id.kasirq.dailysunnah.ui.LocalAppEnglish
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +53,7 @@ fun QuranSearchScreen(
     onBack: () -> Unit,
     onOpenVerse: (QuranSearchResult) -> Unit,
 ) {
+    val english = LocalAppEnglish.current
     val repository = remember { QuranSearchRepository() }
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
@@ -67,10 +70,10 @@ fun QuranSearchScreen(
         hasSearched = true
         error = null
         scope.launch {
-            val response = withContext(Dispatchers.IO) { runCatching { repository.search(query) } }
+            val response = withContext(Dispatchers.IO) { runCatching { repository.search(query, english = english) } }
             results = response.getOrDefault(emptyList())
             error = response.exceptionOrNull()?.message
-                ?: if (results.isEmpty()) "Tidak ada hasil ditemukan." else null
+                ?: if (results.isEmpty()) if (english) "No results found." else "Tidak ada hasil ditemukan." else null
             isLoading = false
         }
     }
@@ -79,11 +82,11 @@ fun QuranSearchScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                navigationIcon = { TextButton(onClick = onBack) { Text("‹") } },
+                navigationIcon = { BackNavigationButton(onClick = onBack) },
                 title = {
                     Column {
-                        Text("Cari Ayat", fontWeight = FontWeight.SemiBold)
-                        Text("Terjemah atau frasa", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (english) "Search verses" else "Cari Ayat", fontWeight = FontWeight.SemiBold)
+                        Text(if (english) "Translation or phrase" else "Terjemah atau frasa", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
             )
@@ -97,7 +100,7 @@ fun QuranSearchScreen(
                 colors = modernTextFieldColors(),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                 singleLine = true,
-                label = { Text("Cari terjemah atau frasa") },
+                label = { Text(if (english) "Search translation or phrase" else "Cari terjemah atau frasa") },
                 leadingIcon = { Text("⌕") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { search() }),
@@ -107,10 +110,11 @@ fun QuranSearchScreen(
                 enabled = query.isNotBlank() && !isLoading,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             ) {
-                Text(if (isLoading) "Mencari…" else "Cari")
+                Text(if (isLoading) if (english) "Searching…" else "Mencari…" else if (english) "Search" else "Cari")
             }
             Text(
-                "Pencarian memakai terjemah Indonesia Quran.com dan memerlukan internet. Hasil membuka ayat pada Mushaf Madinah.",
+                if (english) "Search indexes available English Quran.com translations and requires internet. Opened verses use the QuranEnc · Rowwad Translation Center edition."
+                else "Pencarian memakai terjemah Indonesia Quran.com dan memerlukan internet. Hasil membuka ayat pada Mushaf Madinah.",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -123,7 +127,7 @@ fun QuranSearchScreen(
                     Text(error.orEmpty(), color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
                 }
                 !hasSearched -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Text("Masukkan kata atau frasa untuk mencari ayat.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                    Text(if (english) "Enter a word or phrase to search verses." else "Masukkan kata atau frasa untuk mencari ayat.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                 }
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -137,11 +141,11 @@ fun QuranSearchScreen(
                             color = MaterialTheme.colorScheme.surface,
                         ) {
                             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("Ayat ${result.verseKey} · Halaman ${result.page}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                                Text(if (english) "Verse ${result.verseKey} · Page ${result.page}" else "Ayat ${result.verseKey} · Halaman ${result.page}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                                 if (result.arabic.isNotBlank()) {
                                     Text(result.arabic, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.End, modifier = Modifier.fillMaxWidth())
                                 }
-                                Text(result.translation.ifBlank { "Buka ayat" }, style = MaterialTheme.typography.bodyMedium)
+                                Text(result.translation.ifBlank { if (english) "Open verse" else "Buka ayat" }, style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }

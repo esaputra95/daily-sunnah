@@ -2,7 +2,9 @@ package id.kasirq.dailysunnah.quran.ui
 
 import android.Manifest
 import android.app.TimePickerDialog
+import android.app.DatePickerDialog
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
@@ -19,6 +21,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -46,6 +50,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -76,12 +82,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -92,15 +102,18 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import id.kasirq.dailysunnah.R
+import id.kasirq.dailysunnah.home.DailySunnahWidgetProvider
 import id.kasirq.dailysunnah.quran.data.MushafAssetRepository
 import id.kasirq.dailysunnah.quran.data.MushafPageAsset
 import id.kasirq.dailysunnah.quran.data.MushafPrefetchScheduler
+import id.kasirq.dailysunnah.ui.BackNavigationButton
 import id.kasirq.dailysunnah.quran.data.QuranBookmark
 import id.kasirq.dailysunnah.quran.data.QuranBookmarkStore
 import id.kasirq.dailysunnah.quran.data.QuranJuzIndex
 import id.kasirq.dailysunnah.quran.data.ReadingGoalReminderScheduler
 import id.kasirq.dailysunnah.quran.data.ReadingGoalSnapshot
 import id.kasirq.dailysunnah.quran.data.ReadingGoalStore
+import id.kasirq.dailysunnah.quran.data.KhatamPlanner
 import id.kasirq.dailysunnah.quran.data.QuranReaderPreferences
 import id.kasirq.dailysunnah.quran.data.QuranSurahArabicNames
 import id.kasirq.dailysunnah.quran.data.QuranSurahOpeningPolicy
@@ -113,6 +126,7 @@ import id.kasirq.dailysunnah.quran.data.SurahStart
 import id.kasirq.dailysunnah.quran.data.SurahPageIndex
 import id.kasirq.dailysunnah.ui.ModernTextFieldShape
 import id.kasirq.dailysunnah.ui.modernTextFieldColors
+import id.kasirq.dailysunnah.ui.LocalAppEnglish
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -120,9 +134,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 import kotlin.math.min
 import java.time.LocalTime
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.Duration
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.abs
@@ -136,6 +152,7 @@ fun QuranReaderScreen(
 ) {
     val activityContext = LocalContext.current
     val context = activityContext.applicationContext
+    val english = LocalAppEnglish.current
     val repository = remember { MushafAssetRepository(context) }
     val prefetch = remember { MushafPrefetchScheduler(context) }
     val goalStore = remember { ReadingGoalStore(context) }
@@ -153,6 +170,7 @@ fun QuranReaderScreen(
     var showVerseActions by rememberSaveable { mutableStateOf(false) }
     var showVerseContent by rememberSaveable { mutableStateOf(false) }
     var showTafsir by rememberSaveable { mutableStateOf(false) }
+    var tafsirInEnglish by rememberSaveable { mutableStateOf(false) }
     var verseContent by remember { mutableStateOf<QuranVerseContent?>(null) }
     var verseContentLoading by remember { mutableStateOf(false) }
     var verseContentError by remember { mutableStateOf<String?>(null) }
@@ -174,16 +192,11 @@ fun QuranReaderScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val notificationPermissionRequest = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    var manuallyToggledReadPage by remember { mutableIntStateOf(0) }
-
     fun recordReadPage(pageToRecord: Int) {
-        if (pageToRecord == manuallyToggledReadPage) {
-            manuallyToggledReadPage = 0
-            return
-        }
         if (asset?.page != pageToRecord || isLoading) return
 
         readingGoal = goalStore.markPageRead(pageToRecord)
+        DailySunnahWidgetProvider.updateAll(context)
         if (readingGoal.isComplete) ReadingGoalReminderScheduler.cancel(context)
         else ReadingGoalReminderScheduler.scheduleNext(context)
     }
@@ -208,17 +221,25 @@ fun QuranReaderScreen(
         onDispose { runCatching { audioPlayer?.release() }; audioPlayer = null }
     }
 
-    LaunchedEffect(showVerseContent, showTafsir, selectedVerse) {
+    LaunchedEffect(english) { tafsirInEnglish = english }
+
+    LaunchedEffect(showVerseContent, showTafsir, tafsirInEnglish, selectedVerse, english) {
         if (showVerseContent && selectedVerse != null) {
             verseContentLoading = true
             verseContentError = null
             verseContent = null
             try {
                 verseContent = withContext(Dispatchers.IO) {
-                    if (showTafsir) verseContentRepository.loadTafsir(selectedVerse!!) else verseContentRepository.loadTranslation(selectedVerse!!)
+                    if (showTafsir) verseContentRepository.loadTafsir(selectedVerse!!, tafsirInEnglish) else verseContentRepository.loadTranslation(selectedVerse!!, english)
                 }
             } catch (error: Exception) {
-                verseContentError = error.message ?: "Konten ayat gagal dimuat. Periksa koneksi internet."
+                verseContentError = if (!showTafsir) {
+                    verseContentRepository.translationLoadError(error, english)
+                } else if (english) {
+                    "Tafsir could not be loaded from its source. Please try again later."
+                } else {
+                    "Tafsir tidak dapat dimuat dari sumber. Coba lagi nanti."
+                }
             } finally {
                 verseContentLoading = false
             }
@@ -229,7 +250,7 @@ fun QuranReaderScreen(
         audioPlayer?.let { runCatching { it.stop(); it.release() } }
         audioPlayer = null
         audioPlaying = false
-        audioStatus = "Memuat audio ayat $verseKey…"
+                    audioStatus = if (english) "Loading verse audio $verseKey…" else "Memuat audio ayat $verseKey…"
         coroutineScope.launch {
             try {
                 val reciterId = audioPreferences.reciterId()
@@ -241,14 +262,14 @@ fun QuranReaderScreen(
                 player.setOnPreparedListener {
                     it.start()
                     audioPlaying = true
-                    audioStatus = "Sedang memutar $verseKey"
+                    audioStatus = if (english) "Playing $verseKey" else "Sedang memutar $verseKey"
                 }
                 player.setOnCompletionListener {
                     when (audioPreferences.endBehavior()) {
                         QuranAudioEndBehavior.REPEAT -> {
                             runCatching { it.seekTo(0); it.start() }
                             audioPlaying = true
-                            audioStatus = "Mengulangi ayat $verseKey"
+                            audioStatus = if (english) "Repeating verse $verseKey" else "Mengulangi ayat $verseKey"
                         }
                         QuranAudioEndBehavior.NEXT_AYAH -> {
                             it.release()
@@ -256,14 +277,14 @@ fun QuranReaderScreen(
                             audioPlaying = false
                             val nextVerse = QuranVerseKey.next(verseKey)
                             if (nextVerse == null) {
-                                audioStatus = "Audio selesai di akhir Surah An-Nas."
+                                audioStatus = if (english) "Audio finished at the end of Surah An-Nas." else "Audio selesai di akhir Surah An-Nas."
                             } else {
                                 playVerse(nextVerse)
                             }
                         }
                         QuranAudioEndBehavior.STOP -> {
                             audioPlaying = false
-                            audioStatus = "Audio selesai."
+                            audioStatus = if (english) "Audio finished." else "Audio selesai."
                             it.release()
                             if (audioPlayer === it) audioPlayer = null
                         }
@@ -271,14 +292,14 @@ fun QuranReaderScreen(
                 }
                 player.setOnErrorListener { current, _, _ ->
                     audioPlaying = false
-                    audioStatus = "Audio gagal diputar. Coba lagi saat koneksi stabil."
+                    audioStatus = if (english) "Audio could not play. Try again when your connection is stable." else "Audio gagal diputar. Coba lagi saat koneksi stabil."
                     current.release()
                     if (audioPlayer === current) audioPlayer = null
                     true
                 }
                 player.prepareAsync()
             } catch (error: Exception) {
-                audioStatus = error.message ?: "Audio gagal dimuat."
+                audioStatus = if (english) "Audio could not load. Check your internet connection." else error.message ?: "Audio gagal dimuat."
             }
         }
     }
@@ -370,27 +391,45 @@ fun QuranReaderScreen(
             ?.mapNotNull { parseVerseReference(it.verseKey) }
             ?.minOrNull()
     }
+    val firstVerseOnPage = remember(asset?.page, asset?.layout) {
+        asset?.layout?.verseRegions
+            ?.mapNotNull { region -> parseVerseReference(region.verseKey)?.let { it to region.verseKey } }
+            ?.minByOrNull { it.first }
+            ?.second
+    }
+    val pageBookmarkSaved = firstVerseOnPage != null && bookmarks.any { it.verseKey == firstVerseOnPage }
     val currentSurahNumber = pageReference?.surah
     val currentSurah = currentSurahNumber?.let { number -> surahStarts.firstOrNull { it.number == number } }
         ?: surahStarts.lastOrNull { it.page <= page }
     val currentJuz = QuranJuzIndex.forVerse(pageReference?.surah, pageReference?.ayah)
     Scaffold(
-        containerColor = Color.White,
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                navigationIcon = { TextButton(onClick = ::leaveReader) { Text("‹") } },
+                navigationIcon = { BackNavigationButton(onClick = ::leaveReader) },
                 title = {
                     Column {
                         Text("${currentSurah?.number ?: currentSurahNumber ?: 1}. ${currentSurah?.name ?: "Qur’an"}", style = MaterialTheme.typography.titleMedium)
-                        Text("Halaman $page", style = MaterialTheme.typography.labelSmall)
+                        Text(if (english) "Page $page" else "Halaman $page", style = MaterialTheme.typography.labelSmall)
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            pageInput = page.toString()
+                            showPagePicker = true
+                        },
+                        modifier = Modifier.semantics {
+                            contentDescription = if (english) "Search mushaf page" else "Cari halaman mushaf"
+                        },
+                    ) {
+                        Text("⌕", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                    }
                     Text("Juz $currentJuz", style = MaterialTheme.typography.labelLarge)
                     IconButton(
                         onClick = { showGoalSettings = true },
-                        modifier = Modifier.semantics { contentDescription = "Pengaturan target bacaan" },
+                        modifier = Modifier.semantics { contentDescription = if (english) "Reading goal settings" else "Pengaturan target bacaan" },
                     ) { Text("⚙", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary) }
                 },
             )
@@ -423,7 +462,7 @@ fun QuranReaderScreen(
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
-                        pageError = error.message ?: "Halaman mushaf belum dapat dimuat."
+                        pageError = if (english) "Mushaf page could not load." else error.message ?: "Halaman mushaf belum dapat dimuat."
                     } finally {
                         pageLoading = false
                     }
@@ -450,7 +489,7 @@ fun QuranReaderScreen(
                     ) {
                         CircularProgressIndicator()
                         Spacer(Modifier.height(12.dp))
-                        Text("Menyiapkan Mushaf Madinah…")
+                        Text(if (english) "Preparing Madinah Mushaf…" else "Menyiapkan Mushaf Madinah…")
                     }
                     pageAsset != null -> MushafPageCanvas(
                         asset = pageAsset!!,
@@ -475,9 +514,9 @@ fun QuranReaderScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        Text(pageError ?: "Halaman belum tersedia.")
+                        Text(pageError ?: if (english) "Page is unavailable." else "Halaman belum tersedia.")
                         Spacer(Modifier.height(8.dp))
-                        Button(onClick = { retryKey += 1 }) { Text("Coba lagi") }
+                        Button(onClick = { retryKey += 1 }) { Text(if (english) "Try again" else "Coba lagi") }
                     }
                 }
             }
@@ -488,29 +527,37 @@ fun QuranReaderScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 IconButton(onClick = { openPage(page - 1) }, enabled = page > 1) { Text("‹", style = MaterialTheme.typography.headlineSmall) }
-                TextButton(onClick = { showPagePicker = true }) { Text("Hal. $page / 604") }
+                TextButton(onClick = { showPagePicker = true }) { Text(if (english) "Page $page / 604" else "Hal. $page / 604") }
                 IconButton(onClick = { openPage(page + 1) }, enabled = page < 604) { Text("›", style = MaterialTheme.typography.headlineSmall) }
-                val pageRead = page in readingGoal.completedPages
                 IconButton(
-                    enabled = asset?.page == page,
+                    enabled = asset?.page == page && firstVerseOnPage != null,
                     onClick = {
-                        manuallyToggledReadPage = page
-                        readingGoal = goalStore.togglePage(page)
-                        if (readingGoal.isComplete) ReadingGoalReminderScheduler.cancel(context)
-                        else ReadingGoalReminderScheduler.scheduleNext(context)
+                        val verseKey = firstVerseOnPage ?: return@IconButton
+                        bookmarks = bookmarkStore.toggle(verseKey, page)
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (english) {
+                                    if (pageBookmarkSaved) "Page bookmark removed." else "First verse on page $page saved to bookmarks."
+                                } else {
+                                    if (pageBookmarkSaved) "Bookmark halaman dihapus." else "Ayat pertama halaman $page disimpan ke bookmark."
+                                }
+                            )
+                        }
                     },
                     modifier = Modifier.semantics {
-                        contentDescription = if (pageRead) "Hapus tanda halaman selesai dibaca" else "Tandai halaman selesai dibaca"
+                        contentDescription = if (english) {
+                            if (pageBookmarkSaved) "Remove bookmark for page $page" else "Bookmark first verse on page $page"
+                        } else if (pageBookmarkSaved) "Hapus bookmark awal halaman $page" else "Bookmark ayat pertama halaman $page"
                     },
                 ) {
                     BookmarkGlyph(
-                        filled = pageRead,
-                        color = if (pageRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        filled = pageBookmarkSaved,
+                        color = if (pageBookmarkSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 IconButton(
                     onClick = { showBookmarks = true },
-                    modifier = Modifier.semantics { contentDescription = "Lihat daftar bookmark ayat" },
+                    modifier = Modifier.semantics { contentDescription = if (english) "View verse bookmarks" else "Lihat daftar bookmark ayat" },
                 ) {
                     BookmarkListGlyph(color = MaterialTheme.colorScheme.primary)
                 }
@@ -525,7 +572,7 @@ fun QuranReaderScreen(
     if (showVerseActions && selectedVerse != null) {
         ModalBottomSheet(
             onDismissRequest = { showVerseActions = false },
-            containerColor = Color(0xFFFFFEFA),
+            containerColor = MaterialTheme.colorScheme.surface,
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 26.dp),
@@ -536,25 +583,25 @@ fun QuranReaderScreen(
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                Text("Mushaf Madinah · Halaman $page", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (english) "Madinah Mushaf · Page $page" else "Mushaf Madinah · Halaman $page", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
                         modifier = Modifier.weight(1f),
                         onClick = {
                             bookmarks = bookmarkStore.toggle(selectedVerse!!, page)
-                            coroutineScope.launch { snackbarHostState.showSnackbar("Bookmark ayat diperbarui.") }
+                            coroutineScope.launch { snackbarHostState.showSnackbar(if (english) "Verse bookmark updated." else "Bookmark ayat diperbarui.") }
                         },
                     ) {
-                        Text(if (bookmarks.any { it.verseKey == selectedVerse }) "▣ Tersimpan" else "☆ Bookmark")
+                        Text(if (bookmarks.any { it.verseKey == selectedVerse }) if (english) "▣ Saved" else "▣ Tersimpan" else "☆ Bookmark")
                     }
                     OutlinedButton(
                         modifier = Modifier.weight(1f),
                         onClick = ::playSelectedVerse,
-                    ) { Text(if (audioPlaying) "▶ Memutar" else "▶ Putar audio") }
+                    ) { Text(if (audioPlaying) if (english) "▶ Playing" else "▶ Memutar" else if (english) "▶ Play audio" else "▶ Putar audio") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(modifier = Modifier.weight(1f), onClick = { showTafsir = false; showVerseContent = true }) { Text("文 Terjemah") }
-                    OutlinedButton(modifier = Modifier.weight(1f), onClick = { showTafsir = true; showVerseContent = true }) { Text("Tafsir") }
+                    OutlinedButton(modifier = Modifier.weight(1f), onClick = { showTafsir = false; showVerseContent = true }) { Text(if (english) "文 Translation" else "文 Terjemah") }
+                    OutlinedButton(modifier = Modifier.weight(1f), onClick = { tafsirInEnglish = english; showTafsir = true; showVerseContent = true }) { Text(if (english) "Tafsir" else "Tafsir") }
                 }
                 if (audioStatus.isNotBlank()) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -563,22 +610,23 @@ fun QuranReaderScreen(
                             runCatching { audioPlayer?.stop(); audioPlayer?.release() }
                             audioPlayer = null
                             audioPlaying = false
-                            audioStatus = "Audio dihentikan."
-                        }) { Text("Stop") }
+                            audioStatus = if (english) "Audio stopped." else "Audio dihentikan."
+                        }) { Text(if (english) "Stop" else "Stop") }
                     }
                 }
                 Row(modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth(),
                         onClick = {
-                            val reference = "QS. ${verseSurahName ?: "Surah $verseSurahNumber"} : Ayat ${verseNumber ?: ""} · Mushaf Madinah, halaman $page"
+                            val reference = if (english) "Qur’an ${verseSurahName ?: "Surah $verseSurahNumber"} : Verse ${verseNumber ?: ""} · Madinah Mushaf, page $page"
+                                else "QS. ${verseSurahName ?: "Surah $verseSurahNumber"} : Ayat ${verseNumber ?: ""} · Mushaf Madinah, halaman $page"
                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"
                                 putExtra(Intent.EXTRA_TEXT, reference)
                             }
-                            activityContext.startActivity(Intent.createChooser(shareIntent, "Bagikan referensi ayat"))
+                        activityContext.startActivity(Intent.createChooser(shareIntent, if (english) "Share verse reference" else "Bagikan referensi ayat"))
                         },
-                    ) { Text("↗ Bagikan referensi") }
+                    ) { Text(if (english) "↗ Share reference" else "↗ Bagikan referensi") }
                 }
             }
         }
@@ -586,24 +634,79 @@ fun QuranReaderScreen(
     if (showVerseContent) {
         ModalBottomSheet(
             onDismissRequest = { showVerseContent = false },
-            containerColor = Color(0xFFFFFEFA),
+            containerColor = MaterialTheme.colorScheme.surface,
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(if (showTafsir) "Tafsir ayat ${selectedVerse.orEmpty()}" else "Terjemah ayat ${selectedVerse.orEmpty()}", style = MaterialTheme.typography.titleLarge)
+                if (showTafsir && !english) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !tafsirInEnglish,
+                            onClick = { tafsirInEnglish = false },
+                            label = { Text("Kasirq · Indonesia") },
+                        )
+                        FilterChip(
+                            selected = tafsirInEnglish,
+                            onClick = { tafsirInEnglish = true },
+                            label = { Text("Ibn Kathir · English") },
+                        )
+                    }
+                }
+                Text(
+                    if (showTafsir) (if (english) "Tafsir for verse ${selectedVerse.orEmpty()}" else "${if (tafsirInEnglish) "Tafsir Ibn Kathir (English)" else "Tafsir Kasirq (Indonesia)"} · ${selectedVerse.orEmpty()}")
+                    else if (english) "Translation of verse ${selectedVerse.orEmpty()}" else "Terjemah ayat ${selectedVerse.orEmpty()}",
+                    style = MaterialTheme.typography.titleLarge,
+                )
                 when {
                     verseContentLoading -> CircularProgressIndicator()
                     verseContentError != null -> Text(verseContentError!!, color = MaterialTheme.colorScheme.error)
-                    showTafsir -> Text(verseContent?.tafsir ?: "Tafsir belum tersedia.")
-                    else -> Text(verseContent?.translation ?: "Terjemah belum tersedia.")
+                    showTafsir -> Text(verseContent?.tafsir ?: if (english) "Tafsir is unavailable." else "Tafsir belum tersedia.")
+                    else -> Text(verseContent?.translation ?: if (english) "Translation is unavailable." else "Terjemah belum tersedia.")
+                }
+                verseContent?.tafsirFallbackNotice?.let { notice -> Text(notice, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
+                if (showTafsir && tafsirInEnglish && !english) {
+                    Text("Tafsir versi bahasa Indonesia belum kami sediakan untuk Ibn Kathir. Konten berikut hanya tersedia dalam bahasa Inggris.", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    if (showTafsir) "Sumber: Quran CDN Kasirq" else "Sumber terjemah: Quran.com, translation ID 33 (sama dengan Ashiil)",
+                    if (showTafsir) "Source: ${verseContent?.tafsirSource ?: if (english) "Tafsir Ibn Kathir (English)" else "Tafsir Kasirq (Indonesia)"}"
+                    else "Source: ${verseContent?.translationSource ?: if (english) "QuranEnc · Rowwad Translation Center · v1.0.19" else "Quran.com · Indonesian translation"}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!showTafsir) {
+                    verseContent?.translationFootnotes?.let { footnotes ->
+                        Text(
+                            if (english) "Translator’s notes: $footnotes" else "Catatan penerjemah: $footnotes",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Text(
+                    if (english) "Qur’an translations are published interpretations, not the Arabic text. This app uses an established translation and does not automatically translate Qur’anic text. For a more reliable understanding, consult trusted scholarly sources."
+                    else "Terjemahan Al-Qur’an adalah penafsiran makna, bukan pengganti teks Arab. Aplikasi memakai terjemahan yang telah diterbitkan dan tidak menerjemahkan ayat secara otomatis. Untuk pemahaman yang lebih valid, rujuk sumber ilmiah tepercaya.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = {
+                        val docsUrl = when {
+                            showTafsir -> TAFSIR_DOCS_URL
+                            english -> QURANENC_TRANSLATION_DOCS_URL
+                            else -> TRANSLATION_DOCS_URL
+                        }
+                        activityContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(docsUrl)))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (english) "Browse official translation and tafsir documentation" else "Lihat dokumentasi resmi terjemah dan tafsir")
+                }
             }
         }
     }
@@ -611,9 +714,11 @@ fun QuranReaderScreen(
     if (showGoalSettings) {
         ReadingGoalSettingsDialog(
             snapshot = readingGoal,
+            currentPage = page,
             onDismiss = { showGoalSettings = false },
-            onSave = { target, reminders ->
-                readingGoal = goalStore.updateSettings(target, reminders)
+            onSave = { target, reminders, khatamDate ->
+                readingGoal = goalStore.updateSettings(target, reminders, khatamDate)
+                DailySunnahWidgetProvider.updateAll(context)
                 ReadingGoalReminderScheduler.scheduleNext(context)
                 if (reminders.isNotEmpty() && Build.VERSION.SDK_INT >= 33 &&
                     context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -628,14 +733,14 @@ fun QuranReaderScreen(
         val targetPage = pageInput.toIntOrNull()?.takeIf { it in 1..MushafAssetRepository.MAX_PAGE }
         AlertDialog(
             onDismissRequest = { showPagePicker = false },
-            title = { Text("Lompat ke halaman") },
+            title = { Text(if (english) "Search mushaf page" else "Cari halaman mushaf") },
             text = {
                 OutlinedTextField(
                     value = pageInput,
                     onValueChange = { input -> pageInput = input.filter(Char::isDigit).take(3) },
                     shape = ModernTextFieldShape,
                     colors = modernTextFieldColors(),
-                    label = { Text("Halaman 1–604") },
+                    label = { Text(if (english) "Page number (1–604)" else "Nomor halaman (1–604)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = {
@@ -651,9 +756,9 @@ fun QuranReaderScreen(
                         targetPage?.let(::openPage)
                         showPagePicker = false
                     },
-                ) { Text("Buka") }
+                ) { Text(if (english) "Search" else "Cari") }
             },
-            dismissButton = { TextButton(onClick = { showPagePicker = false }) { Text("Batal") } },
+            dismissButton = { TextButton(onClick = { showPagePicker = false }) { Text(if (english) "Cancel" else "Batal") } },
         )
     }
     if (showBookmarks) {
@@ -673,29 +778,34 @@ fun QuranReaderScreen(
     }
 }
 
+private const val TRANSLATION_DOCS_URL = "https://api-docs.quran.com/docs/content_apis_versioned/4.0.0/list-surah-translations/"
+private const val TAFSIR_DOCS_URL = "https://api-docs.quran.com/docs/content_apis_versioned/4.0.0/tafsirs/"
+private const val QURANENC_TRANSLATION_DOCS_URL = "https://quranenc.com/en/home/api/"
+
 @Composable
 private fun QuranBookmarksDialog(
     bookmarks: List<QuranBookmark>,
     onDismiss: () -> Unit,
     onSelect: (QuranBookmark) -> Unit,
 ) {
+    val english = LocalAppEnglish.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Bookmark ayat") },
+        title = { Text(if (english) "Verse bookmarks" else "Bookmark ayat") },
         text = {
             if (bookmarks.isEmpty()) {
-                Text("Belum ada ayat yang disimpan.")
+                Text(if (english) "No saved verses yet." else "Belum ada ayat yang disimpan.")
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                     items(bookmarks, key = { it.verseKey }) { bookmark ->
                         TextButton(onClick = { onSelect(bookmark) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Ayat ${bookmark.verseKey} · Halaman ${bookmark.page}", modifier = Modifier.fillMaxWidth())
+                            Text(if (english) "Verse ${bookmark.verseKey} · Page ${bookmark.page}" else "Ayat ${bookmark.verseKey} · Halaman ${bookmark.page}", modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Tutup") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(if (english) "Close" else "Tutup") } },
     )
 }
 
@@ -705,57 +815,106 @@ private fun SurahPickerDialog(
     onDismiss: () -> Unit,
     onSelect: (SurahStart) -> Unit,
 ) {
+    val english = LocalAppEnglish.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Pilih surah") },
+        title = { Text(if (english) "Choose a surah" else "Pilih surah") },
         text = {
             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                 items(surahs, key = { it.number }) { surah ->
                     TextButton(onClick = { onSelect(surah) }, modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Text("${surah.number}. ${surah.name}")
-                            Text("Halaman ${surah.page}", style = MaterialTheme.typography.labelSmall)
+                            Text(if (english) "Page ${surah.page}" else "Halaman ${surah.page}", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Tutup") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(if (english) "Close" else "Tutup") } },
     )
 }
 
 @Composable
 internal fun ReadingGoalSettingsDialog(
     snapshot: ReadingGoalSnapshot,
+    currentPage: Int,
     onDismiss: () -> Unit,
-    onSave: (targetPages: Int, reminderMinutes: List<Int>) -> Unit,
+    onSave: (targetPages: Int, reminderMinutes: List<Int>, khatamDate: LocalDate?) -> Unit,
 ) {
+    val english = LocalAppEnglish.current
     val context = LocalContext.current
-    var targetText by remember { mutableStateOf(snapshot.targetPages.toString()) }
+    var targetText by remember { mutableStateOf(snapshot.manualTargetPages.toString()) }
+    var khatamDateText by remember(snapshot.khatamDate) { mutableStateOf(snapshot.khatamDate?.toString().orEmpty()) }
     val reminders = remember { mutableStateListOf<Int>().apply { addAll(snapshot.reminderMinutes) } }
     val targetPages = targetText.toIntOrNull()?.takeIf { it in 1..MushafAssetRepository.MAX_PAGE }
+    val today = LocalDate.now()
+    val khatamDate = khatamDateText.takeIf(String::isNotBlank)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        ?.takeIf { !it.isBefore(today) }
+    val khatamPagesPerDay = khatamDate?.let { KhatamPlanner.pagesPerDay(currentPage, it, today) }
+    val displayLocale = Locale.forLanguageTag(if (english) "en-US" else "id-ID")
     val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Target bacaan harian") },
+        title = { Text(if (english) "Daily reading goal" else "Target bacaan harian") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Pilih jumlah halaman yang ingin kamu selesaikan setiap hari.")
+            Column(
+                modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(if (english) "Choose how many pages you want to complete each day." else "Pilih jumlah halaman yang ingin kamu selesaikan setiap hari.")
                 OutlinedTextField(
                     value = targetText,
                     onValueChange = { targetText = it.filter(Char::isDigit).take(3) },
                     shape = ModernTextFieldShape,
                     colors = modernTextFieldColors(),
-                    label = { Text("Halaman per hari") },
+                    label = { Text(if (english) "Pages per day" else "Halaman per hari") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
-                Text("Pengingat jika target belum tercapai", style = MaterialTheme.typography.titleSmall)
+                HorizontalDivider()
+                Text(if (english) "Khatam plan" else "Rencana khatam", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (english) "Choose a finish date. Daily pages will adjust from your last opened page ($currentPage)."
+                    else "Pilih tanggal selesai. Target harian dihitung dari halaman terakhir yang dibuka ($currentPage).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = {
+                            val initial = khatamDate ?: today.plusDays(30)
+                            DatePickerDialog(
+                                context,
+                                { _, year, month, day -> khatamDateText = LocalDate.of(year, month + 1, day).toString() },
+                                initial.year,
+                                initial.monthValue - 1,
+                                initial.dayOfMonth,
+                            ).apply { datePicker.minDate = System.currentTimeMillis() }.show()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(khatamDate?.format(DateTimeFormatter.ofPattern("d MMM yyyy", displayLocale))
+                            ?: if (english) "Choose finish date" else "Pilih tanggal selesai")
+                    }
+                    if (khatamDateText.isNotBlank()) TextButton(onClick = { khatamDateText = "" }) {
+                        Text(if (english) "Clear" else "Hapus")
+                    }
+                }
+                if (khatamDate != null && khatamPagesPerDay != null) {
+                    Text(
+                        if (english) "Plan: about $khatamPagesPerDay pages per day through ${khatamDate.format(DateTimeFormatter.ofPattern("d MMM yyyy", displayLocale))}."
+                        else "Rencana: sekitar $khatamPagesPerDay halaman per hari sampai ${khatamDate.format(DateTimeFormatter.ofPattern("d MMM yyyy", displayLocale))}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Text(if (english) "Reminders if the goal is not complete" else "Pengingat jika target belum tercapai", style = MaterialTheme.typography.titleSmall)
                 reminders.forEachIndexed { index, minute ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(LocalTime.of(minute / 60, minute % 60).format(timeFormatter), modifier = Modifier.weight(1f))
-                        TextButton(onClick = { reminders.removeAt(index) }) { Text("Hapus") }
+                        TextButton(onClick = { reminders.removeAt(index) }) { Text(if (english) "Remove" else "Hapus") }
                     }
                 }
                 TextButton(
@@ -774,9 +933,9 @@ internal fun ReadingGoalSettingsDialog(
                             true,
                         ).show()
                     },
-                ) { Text("Tambah waktu") }
+                ) { Text(if (english) "Add time" else "Tambah waktu") }
                 Text(
-                    "Android dapat menunda pengingat saat mode hemat daya aktif.",
+                    if (english) "Android may delay reminders while battery saver is active." else "Android dapat menunda pengingat saat mode hemat daya aktif.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -785,10 +944,10 @@ internal fun ReadingGoalSettingsDialog(
         confirmButton = {
             TextButton(
                 enabled = targetPages != null,
-                onClick = { targetPages?.let { onSave(it, reminders.toList()) } },
-            ) { Text("Simpan") }
+                onClick = { targetPages?.let { onSave(it, reminders.toList(), khatamDate) } },
+            ) { Text(if (english) "Save" else "Simpan") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (english) "Cancel" else "Batal") } },
     )
 }
 
@@ -806,6 +965,20 @@ private fun MushafPageCanvas(
     modifier: Modifier = Modifier,
 ) {
     val imageBitmap = remember(asset.bitmap) { asset.bitmap.asImageBitmap() }
+    val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val mushafInkColor = MaterialTheme.colorScheme.onSurface
+    val pageColorFilter = remember(isDarkTheme, mushafInkColor) {
+        if (!isDarkTheme) null else ColorFilter.colorMatrix(
+            ColorMatrix(
+                floatArrayOf(
+                    -mushafInkColor.red, 0f, 0f, 0f, mushafInkColor.red * 255f,
+                    0f, -mushafInkColor.green, 0f, 0f, mushafInkColor.green * 255f,
+                    0f, 0f, -mushafInkColor.blue, 0f, mushafInkColor.blue * 255f,
+                    0f, 0f, 0f, 1f, 0f,
+                ),
+            ),
+        )
+    }
     val context = LocalContext.current
     val hafsTypeface = remember(context) {
         runCatching {
@@ -817,15 +990,15 @@ private fun MushafPageCanvas(
             context.resources.getFont(R.font.kfgqpc_nastaleeq_regular)
         }.getOrElse { hafsTypeface }
     }
-    val surahDecorations = remember(asset.layout, hafsTypeface, nastaleeqTypeface) {
-        buildSurahDecorations(asset.layout, hafsTypeface, nastaleeqTypeface)
+    val surahDecorations = remember(asset.layout, hafsTypeface, nastaleeqTypeface, isDarkTheme, mushafInkColor) {
+        buildSurahDecorations(asset.layout, hafsTypeface, nastaleeqTypeface, isDarkTheme, mushafInkColor.toArgb())
     }
     val currentZoom by rememberUpdatedState(zoom)
     val currentPan by rememberUpdatedState(pan)
     val currentOnTransform by rememberUpdatedState(onTransform)
     Canvas(
         modifier = modifier
-            .background(Color.White)
+            .background(if (isDarkTheme) Color(0xFF101415) else Color.White)
             .pointerInput(asset.page, gesturesEnabled) {
                 if (gesturesEnabled) {
                     detectTapGestures { touch ->
@@ -947,6 +1120,7 @@ private fun MushafPageCanvas(
             image = imageBitmap,
             dstOffset = androidx.compose.ui.unit.IntOffset(transformedLeft.toInt(), transformedTop.toInt()),
             dstSize = androidx.compose.ui.unit.IntSize(transformedWidth.toInt(), transformedHeight.toInt()),
+            colorFilter = pageColorFilter,
         )
 
         // Keep the frame and surah cartouche at normal page size while the sparse opening-page
@@ -973,6 +1147,7 @@ private fun MushafPageCanvas(
                 height = headerHeight,
                 plaqueWidth = minOf(frameWidth * 0.44f, headerWidth * 1.28f),
                 scale = dividerScale,
+                darkTheme = isDarkTheme,
             )
 
             drawArabicLayout(
@@ -980,13 +1155,16 @@ private fun MushafPageCanvas(
                 layout = decoration.title,
                 left = pageCenterX - decoration.title.width * dividerScale / 2f,
                 top = headerTop + (headerHeight - decoration.title.height * dividerScale) / 2f,
-                scale = dividerScale,
+                scaleX = dividerScale,
+                scaleY = dividerScale,
             )
 
             val basmalaLayout = decoration.basmala ?: return@forEach
             // Page 2 has a custom standalone basmala above the opening ayah. Its source
             // typography is larger than the printed ayah, so reduce it to match the mushaf.
-            val basmalaScale = sourceScale * if (asset.page == 2) PAGE_TWO_BASMALA_SCALE else 1f
+            val pageTwoScale = if (asset.page == 2) PAGE_TWO_BASMALA_SCALE else 1f
+            val basmalaScaleX = sourceScale * pageTwoScale * if (asset.page == 2) PAGE_TWO_BASMALA_WIDTH_ADJUSTMENT else 1f
+            val basmalaScaleY = sourceScale * pageTwoScale * if (asset.page == 2) PAGE_TWO_BASMALA_HEIGHT_ADJUSTMENT else 1f
             val firstAyahTop = if (asset.page == 2) {
                 asset.layout.verseRegions
                     .filter { it.verseKey == "${decoration.header.chapterId}:1" }
@@ -996,14 +1174,15 @@ private fun MushafPageCanvas(
             }
             val basmalaTop = firstAyahTop?.let { ayahTop ->
                 transformedTop + (ayahTop - viewBox.y) * sourceScale -
-                    basmalaLayout.height * basmalaScale - size.height * 0.012f * zoom
+                    basmalaLayout.height * basmalaScaleY - size.height * 0.012f * zoom
             } ?: (transformedTop + (decoration.basmalaTop - viewBox.y) * sourceScale)
             drawArabicLayout(
                 canvas = drawContext.canvas.nativeCanvas,
                 layout = basmalaLayout,
-                left = pageCenterX - basmalaLayout.width * basmalaScale / 2f,
+                left = pageCenterX - basmalaLayout.width * basmalaScaleX / 2f,
                 top = basmalaTop,
-                scale = basmalaScale,
+                scaleX = basmalaScaleX,
+                scaleY = basmalaScaleY,
             )
         }
 
@@ -1014,14 +1193,14 @@ private fun MushafPageCanvas(
             val height = region.rect.height * fitScale * zoom
             if (region.verseKey == selectedVerse) {
                 drawRect(
-                    color = Color(0x550E7490),
+                    color = if (isDarkTheme) Color(0x665A8D90) else Color(0x550E7490),
                     topLeft = Offset(x, y),
                     size = Size(width, height),
                 )
             }
             if (region.verseKey in bookmarkedVerseKeys) {
                 drawRect(
-                    color = Color(0xFFD97706),
+                    color = if (isDarkTheme) Color(0xFFC6A46B) else Color(0xFFD97706),
                     topLeft = Offset(x, y),
                     size = Size(width, height),
                     style = Stroke(width = 2f),
@@ -1038,6 +1217,7 @@ private fun MushafPageCanvas(
             top = frameInset + if (verticalScrollActive) 0f else effectivePanY,
             width = ((size.width - 4f) * zoom).coerceAtLeast(0f),
             height = ((size.height - 4f) * zoom).coerceAtLeast(0f),
+            darkTheme = isDarkTheme,
         )
     }
 }
@@ -1045,7 +1225,9 @@ private fun MushafPageCanvas(
 private fun mushafPageDisplayScale(page: Int): Float =
     if (page == 1 || page == 2) 0.78f else 1f
 
-private const val PAGE_TWO_BASMALA_SCALE = 0.66f
+private const val PAGE_TWO_BASMALA_SCALE = 0.495f
+private const val PAGE_TWO_BASMALA_HEIGHT_ADJUSTMENT = 1.05f
+private const val PAGE_TWO_BASMALA_WIDTH_ADJUSTMENT = 1.10f
 
 private fun mushafPageTop(canvasHeight: Float, drawnHeight: Float, page: Int): Float =
     if (drawnHeight > canvasHeight) 0f
@@ -1065,6 +1247,8 @@ private fun buildSurahDecorations(
     layout: id.kasirq.dailysunnah.quran.data.MushafPageLayout,
     titleTypeface: Typeface,
     basmalaTypeface: Typeface,
+    darkTheme: Boolean,
+    inkColor: Int,
 ): List<SurahDecoration> = layout.sectionHeaders.mapNotNull { header ->
     val arabicName = QuranSurahArabicNames.get(header.chapterId) ?: return@mapNotNull null
     val titleText = "سورة $arabicName"
@@ -1073,7 +1257,7 @@ private fun buildSurahDecorations(
         text = titleText,
         width = plaqueWidth * 0.80f,
         textSize = header.rect.height * 0.54f,
-        color = android.graphics.Color.rgb(29, 77, 68),
+        color = if (darkTheme) inkColor else android.graphics.Color.rgb(29, 77, 68),
         typeface = titleTypeface,
     )
 
@@ -1102,7 +1286,7 @@ private fun buildSurahDecorations(
             text = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
             width = layout.renderViewBox.width * 0.94f,
             textSize = desiredTextSize,
-            color = android.graphics.Color.rgb(38, 35, 29),
+            color = inkColor,
             typeface = basmalaTypeface,
             strokeWidth = desiredTextSize * 0.008f,
             targetTextWidth = basmalaTargetWidth,
@@ -1115,7 +1299,7 @@ private fun buildSurahDecorations(
                 text = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
                 width = layout.renderViewBox.width * 0.94f,
                 textSize = fittedTextSize,
-                color = android.graphics.Color.rgb(38, 35, 29),
+                color = inkColor,
                 typeface = basmalaTypeface,
                 strokeWidth = fittedTextSize * 0.008f,
                 targetTextWidth = basmalaTargetWidth,
@@ -1169,11 +1353,12 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSurahDivider(
     height: Float,
     plaqueWidth: Float,
     scale: Float,
+    darkTheme: Boolean,
 ) {
-    val green = Color(0xFF245F58)
-    val greenLight = Color(0xFF6D9388)
-    val gold = Color(0xFFB69A5A)
-    val parchment = Color(0xFFF5F0E6)
+    val green = if (darkTheme) Color(0xFF789C95) else Color(0xFF245F58)
+    val greenLight = if (darkTheme) Color(0xFF526F6A) else Color(0xFF6D9388)
+    val gold = if (darkTheme) Color(0xFFB59D72) else Color(0xFFB69A5A)
+    val parchment = if (darkTheme) Color(0xFF252D2D) else Color(0xFFF5F0E6)
     val line = maxOf(1f, scale * 0.65f)
     val inset = height * 0.075f
     val right = left + width
@@ -1209,8 +1394,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSurahDivider(
     val leftPanelEnd = plaqueLeft - height * 0.07f
     val rightPanelStart = plaqueRight + height * 0.07f
     val rightPanelEnd = right - inset * 1.5f
-    drawSurahPatternPanel(leftPanelStart, leftPanelEnd, top, height, green, greenLight, gold)
-    drawSurahPatternPanel(rightPanelStart, rightPanelEnd, top, height, green, greenLight, gold)
+    drawSurahPatternPanel(leftPanelStart, leftPanelEnd, top, height, green, greenLight, gold, parchment)
+    drawSurahPatternPanel(rightPanelStart, rightPanelEnd, top, height, green, greenLight, gold, parchment)
 
     drawPath(plaqueShape, parchment)
     drawPath(plaqueShape, green, style = Stroke(line * 1.35f))
@@ -1225,13 +1410,14 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMushafFrame(
     top: Float,
     width: Float,
     height: Float,
+    darkTheme: Boolean,
 ) {
     val shortSide = minOf(width, height)
     if (shortSide < 80f) return
 
-    val green = Color(0xFF245F58)
-    val greenLight = Color(0xFF6D9388)
-    val gold = Color(0xFFB69A5A)
+    val green = if (darkTheme) Color(0xFF789C95) else Color(0xFF245F58)
+    val greenLight = if (darkTheme) Color(0xFF526F6A) else Color(0xFF6D9388)
+    val gold = if (darkTheme) Color(0xFFB59D72) else Color(0xFFB69A5A)
     // Keep ornament at the page edge so it does not crowd the printed Arabic text.
     val inset = (shortSide * 0.004f).coerceAtLeast(2f)
     val railWidth = (shortSide * 0.018f).coerceIn(6f, 13f)
@@ -1302,13 +1488,14 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSurahPatternPan
     green: Color,
     greenLight: Color,
     gold: Color,
+    background: Color,
 ) {
     if (right <= left) return
     val centerY = top + height / 2f
     val bottom = top + height
     val inset = height * 0.12f
     val line = maxOf(1f, height * 0.018f)
-    drawRect(Color(0xFFE8EEE7), Offset(left, top + inset), Size(right - left, height - inset * 2f))
+    drawRect(background, Offset(left, top + inset), Size(right - left, height - inset * 2f))
     drawLine(green, Offset(left, top + inset), Offset(right, top + inset), line)
     drawLine(green, Offset(left, bottom - inset), Offset(right, bottom - inset), line)
     drawLine(gold, Offset(left, top + inset + line * 2f), Offset(right, top + inset + line * 2f), line * 0.55f)
@@ -1427,11 +1614,12 @@ private fun drawArabicLayout(
     layout: StaticLayout,
     left: Float,
     top: Float,
-    scale: Float,
+    scaleX: Float,
+    scaleY: Float,
 ) {
     val save = canvas.save()
     canvas.translate(left, top)
-    canvas.scale(scale, scale)
+    canvas.scale(scaleX, scaleY)
     layout.draw(canvas)
     canvas.restoreToCount(save)
 }

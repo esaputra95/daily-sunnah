@@ -7,13 +7,16 @@ data class ReadingGoalSnapshot(
     val targetPages: Int,
     val reminderMinutes: List<Int>,
     val completedPages: Set<Int>,
+    val khatamDate: LocalDate? = null,
+    val manualTargetPages: Int = targetPages,
 ) {
     val completedCount: Int get() = completedPages.size
     val isComplete: Boolean get() = completedCount >= targetPages
 }
 
 class ReadingGoalStore(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val preferences = appContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
 
     @Synchronized
     fun load(today: LocalDate = LocalDate.now()): ReadingGoalSnapshot {
@@ -33,8 +36,15 @@ class ReadingGoalStore(context: Context) {
                 .apply()
             emptySet()
         }
+        val khatamDate = preferences.getString(KEY_KHATAM_DATE, null)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        val manualTarget = preferences.getInt(KEY_TARGET_PAGES, DEFAULT_TARGET_PAGES)
+            .coerceIn(1, MushafAssetRepository.MAX_PAGE)
+        val plannedTarget = khatamDate?.let {
+            KhatamPlanner.pagesPerDay(QuranReaderPreferences(appContext).lastReadPage(), it, today)
+        }
         return ReadingGoalSnapshot(
-            targetPages = preferences.getInt(KEY_TARGET_PAGES, DEFAULT_TARGET_PAGES).coerceIn(1, MushafAssetRepository.MAX_PAGE),
+            targetPages = plannedTarget ?: manualTarget,
             reminderMinutes = preferences.getString(KEY_REMINDERS, "")
                 .orEmpty()
                 .split(',')
@@ -43,6 +53,8 @@ class ReadingGoalStore(context: Context) {
                 .distinct()
                 .sorted(),
             completedPages = completedPages,
+            khatamDate = khatamDate,
+            manualTargetPages = manualTarget,
         )
     }
 
@@ -89,13 +101,14 @@ class ReadingGoalStore(context: Context) {
     }
 
     @Synchronized
-    fun updateSettings(targetPages: Int, reminderMinutes: List<Int>): ReadingGoalSnapshot {
+    fun updateSettings(targetPages: Int, reminderMinutes: List<Int>, khatamDate: LocalDate? = null): ReadingGoalSnapshot {
         require(targetPages in 1..MushafAssetRepository.MAX_PAGE)
         val normalizedReminders = reminderMinutes.distinct().filter { it in 0..1439 }.sorted().take(MAX_REMINDERS)
-        preferences.edit()
+        val editor = preferences.edit()
             .putInt(KEY_TARGET_PAGES, targetPages)
             .putString(KEY_REMINDERS, normalizedReminders.joinToString(","))
-            .apply()
+        if (khatamDate == null) editor.remove(KEY_KHATAM_DATE) else editor.putString(KEY_KHATAM_DATE, khatamDate.toString())
+        editor.apply()
         return load()
     }
 
@@ -105,6 +118,7 @@ class ReadingGoalStore(context: Context) {
         private const val FILE_NAME = "quran-reading-goal"
         private const val KEY_TARGET_PAGES = "target-pages"
         private const val KEY_REMINDERS = "reminder-minutes"
+        private const val KEY_KHATAM_DATE = "khatam-end-date"
         private const val KEY_PROGRESS_DATE = "progress-date"
         private const val KEY_COMPLETED_PAGES = "completed-pages"
     }

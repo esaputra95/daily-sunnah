@@ -17,7 +17,7 @@ data class ZakatSavingsResult(
     val goldPricePerGramRupiah: BigDecimal,
     val nisabRupiah: BigDecimal,
     val dueRupiah: BigDecimal,
-)
+) : java.io.Serializable
 
 object ZakatSavingsCalculator {
     const val PROFILE_ID = "BAZNAS_SAVINGS_85G_2_5_V1"
@@ -36,9 +36,9 @@ object ZakatSavingsCalculator {
         val status = when {
             savingsRupiah == null || savingsRupiah.signum() < 0 ||
                 goldPricePerGramRupiah == null || goldPricePerGramRupiah.signum() <= 0 -> ZakatSavingsStatus.INCOMPLETE
+            savings < nisab -> ZakatSavingsStatus.BELOW_NISAB
             !fullyOwnedAndPermissible -> ZakatSavingsStatus.OWNERSHIP_UNCONFIRMED
             !haulCompleted -> ZakatSavingsStatus.HAUL_NOT_MET
-            savings < nisab -> ZakatSavingsStatus.BELOW_NISAB
             else -> ZakatSavingsStatus.DUE
         }
         val due = if (status == ZakatSavingsStatus.DUE) {

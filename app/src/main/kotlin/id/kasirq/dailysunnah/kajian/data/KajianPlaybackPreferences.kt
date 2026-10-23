@@ -2,10 +2,10 @@ package id.kasirq.dailysunnah.kajian.data
 
 import android.content.Context
 
-enum class KajianEndBehavior(val label: String, val description: String) {
-    NEXT("Lanjut video berikutnya", "Setelah selesai, putar video selanjutnya."),
-    STOP("Berhenti", "Berhenti setelah video selesai."),
-    REPLAY("Ulangi video", "Putar video yang sama dari awal."),
+enum class KajianEndBehavior(val label: String, val description: String, val englishLabel: String, val englishDescription: String) {
+    NEXT("Lanjut video berikutnya", "Setelah selesai, putar video selanjutnya.", "Play next video", "Start the next video when this one ends."),
+    STOP("Berhenti", "Berhenti setelah video selesai.", "Stop", "Stop when this video ends."),
+    REPLAY("Ulangi video", "Putar video yang sama dari awal.", "Replay video", "Play this video again from the beginning."),
 }
 
 class KajianPlaybackPreferences(context: Context) {

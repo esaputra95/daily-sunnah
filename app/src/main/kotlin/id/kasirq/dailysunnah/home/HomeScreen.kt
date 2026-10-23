@@ -18,10 +18,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,22 +45,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import id.kasirq.dailysunnah.R
 import id.kasirq.dailysunnah.quran.data.QuranReaderPreferences
 import id.kasirq.dailysunnah.quran.data.ReadingGoalReminderScheduler
 import id.kasirq.dailysunnah.quran.data.ReadingGoalSnapshot
 import id.kasirq.dailysunnah.quran.data.ReadingGoalStore
 import id.kasirq.dailysunnah.quran.ui.ReadingGoalSettingsDialog
+import id.kasirq.dailysunnah.home.DailySunnahWidgetProvider
 import id.kasirq.dailysunnah.kajian.data.KajianCatalogRepository
 import id.kasirq.dailysunnah.kajian.data.KajianCatalogSnapshot
 import id.kasirq.dailysunnah.kajian.data.KajianVideo
 import id.kasirq.dailysunnah.kajian.ui.KajianThumbnail
+import id.kasirq.dailysunnah.ui.LocalAppEnglish
 import id.kasirq.dailysunnah.ibadah.data.HijriCalendarPreferences
 import id.kasirq.dailysunnah.ibadah.data.PrayerLocationStore
 import id.kasirq.dailysunnah.ibadah.data.PrayerName
@@ -81,13 +82,13 @@ import java.util.Locale
 fun HomeScreen(
     onContinueReading: (Int) -> Unit,
     onOpenIbadah: () -> Unit,
-    onOpenPrayerSettings: () -> Unit,
     onOpenAllKajian: () -> Unit,
     onOpenAllShorts: () -> Unit,
     onPlayKajian: (List<KajianVideo>, Int) -> Unit,
     onPlayShorts: (List<KajianVideo>, Int) -> Unit,
 ) {
     val context = LocalContext.current
+    val english = LocalAppEnglish.current
     val appContext = context.applicationContext
     val readerPreferences = remember { QuranReaderPreferences(appContext) }
     val goalStore = remember { ReadingGoalStore(appContext) }
@@ -104,9 +105,9 @@ fun HomeScreen(
     val hijriOffset = remember(appContext) { HijriCalendarPreferences.offsetDays(appContext) }
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     val notificationPermissionRequest = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    val dateLabel = remember(now.toLocalDate()) {
+    val dateLabel = remember(now.toLocalDate(), english) {
         val today = now.toLocalDate()
-        today.format(DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale.forLanguageTag("id-ID")))
+        today.format(DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale.forLanguageTag(if (english) "en-US" else "id-ID")))
     }
 
     LaunchedEffect(Unit) {
@@ -157,72 +158,65 @@ fun HomeScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { TopAppBar(title = { Text("Daily Sunnah", fontWeight = FontWeight.SemiBold) }) },
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Image(
+                            painter = painterResource(R.drawable.app_logo),
+                            contentDescription = null,
+                            modifier = Modifier.size(34.dp),
+                        )
+                        Text("Daily Sunnah", fontWeight = FontWeight.SemiBold)
+                    }
+                },
+            )
+        },
     ) { contentPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .padding(bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenIbadah),
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.primary,
                 tonalElevation = 2.dp,
             ) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Surface(
-                            modifier = Modifier.weight(1f).clickable(onClick = onOpenIbadah),
-                            shape = CircleShape,
-                            color = Color.White.copy(alpha = 0.13f),
-                        ) {
-                            Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                Text("⌖", color = Color(0xFFFFD88A), fontWeight = FontWeight.Bold)
-                                Text(
-                                    coordinates?.let { "${"%.5f".format(Locale.US, it.latitude)}, ${"%.5f".format(Locale.US, it.longitude)}" } ?: "Atur lokasi presisi",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                        HomePrayerShortcut("⌖", "Jadwal", onOpenIbadah)
-                        HomePrayerShortcut("▦", "Kalender", onOpenIbadah)
-                        HomePrayerShortcut("⚙", "Pengaturan", onOpenPrayerSettings)
-                    }
-
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(now.format(DateTimeFormatter.ofPattern("HH:mm")), color = Color.White, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Light)
+                                Text(now.format(DateTimeFormatter.ofPattern("HH:mm")), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Light)
                             }
-                            Text(dateLabel.replaceFirstChar { it.uppercase(Locale.forLanguageTag("id-ID")) }, color = Color.White.copy(alpha = 0.82f), style = MaterialTheme.typography.bodySmall)
+                            Text(dateLabel.replaceFirstChar { it.uppercase(Locale.forLanguageTag(if (english) "en-US" else "id-ID")) }, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f), style = MaterialTheme.typography.bodySmall)
                         }
-                        Surface(shape = RoundedCornerShape(15.dp), color = Color(0xFFB99236).copy(alpha = 0.48f)) {
+                        Surface(shape = RoundedCornerShape(15.dp), color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.20f)) {
                             Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(hijriLabel(hijriReferenceDate, hijriOffset).substringBefore(' '), color = Color(0xFFFFE6A7), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text(hijriLabel(hijriReferenceDate, hijriOffset).substringAfter(' '), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelSmall)
+                                Text(hijriLabel(hijriReferenceDate, hijriOffset, english).substringBefore(' '), color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                Text(hijriLabel(hijriReferenceDate, hijriOffset, english).substringAfter(' '), color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f), style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
 
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.24f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.20f))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Surface(shape = RoundedCornerShape(14.dp), color = Color.White.copy(alpha = 0.12f)) {
-                            Text("☀", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), color = Color(0xFFFFD88A), style = MaterialTheme.typography.titleLarge)
+                        Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.10f)) {
+                            Text("☀", modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.titleLarge)
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("SHALAT BERIKUTNYA", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
-                            Text(nextPrayer?.name?.label ?: "Jadwal shalat", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                            Text(if (nextPrayer != null) formatTimeUntil(nextPrayer.dateTime, now) else "Aktifkan lokasi presisi untuk melihat jadwal", color = Color.White.copy(alpha = 0.84f), style = MaterialTheme.typography.bodySmall)
+                            Text(if (english) "NEXT PRAYER" else "SHALAT BERIKUTNYA", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
+                            Text(nextPrayer?.name?.let { if (english) it.englishLabel else it.label } ?: if (english) "Prayer schedule" else "Jadwal shalat", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                            Text(if (nextPrayer != null) formatTimeUntil(nextPrayer.dateTime, now) else if (english) "Enable precise location to view prayer times" else "Aktifkan lokasi presisi untuk melihat jadwal", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.84f), style = MaterialTheme.typography.bodySmall)
                         }
                         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(nextPrayer?.let { formatPrayerTime(it.dateTime) } ?: "--:--", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                            Text("${currentPrayer?.name?.label ?: "Hari ini"} sekarang", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
+                            Text(nextPrayer?.let { formatPrayerTime(it.dateTime) } ?: "--:--", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                            Text(if (english) "${currentPrayer?.name?.englishLabel ?: "Today"} now" else "${currentPrayer?.name?.label ?: "Hari ini"} sekarang", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -231,13 +225,13 @@ fun HomeScreen(
             Surface(
                 modifier = Modifier.fillMaxWidth().clickable { onContinueReading(lastReadPage) },
                 shape = RoundedCornerShape(18.dp),
-                color = Color(0xFFFFFEFA),
+                color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
             ) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Lanjutkan membaca Qur’an", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Text("Mushaf Madinah · Halaman $lastReadPage", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (english) "Continue reading the Qur’an" else "Lanjutkan membaca Qur’an", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(if (english) "Madinah Mushaf · Page $lastReadPage" else "Mushaf Madinah · Halaman $lastReadPage", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text("›", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
                 }
@@ -246,7 +240,7 @@ fun HomeScreen(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
-                color = Color(0xFFFFFEFA),
+                color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
             ) {
                 Column(
@@ -255,63 +249,50 @@ fun HomeScreen(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Target tilawah hari ini", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text("${readingGoal.completedCount} dari ${readingGoal.targetPages} halaman", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (english) "Today’s reading goal" else "Target tilawah hari ini", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(if (english) "${readingGoal.completedCount} of ${readingGoal.targetPages} pages" else "${readingGoal.completedCount} dari ${readingGoal.targetPages} halaman", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            readingGoal.khatamDate?.let { finishDate ->
+                                Text(
+                                    if (english) "Khatam plan · ${finishDate.format(DateTimeFormatter.ofPattern("d MMM", Locale.forLanguageTag("en-US")))}"
+                                    else "Rencana khatam · ${finishDate.format(DateTimeFormatter.ofPattern("d MMM", Locale.forLanguageTag("id-ID")))}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
-                        TextButton(onClick = { showGoalSettings = true }) { Text("Atur") }
+                        TextButton(onClick = { showGoalSettings = true }) { Text(if (english) "Set" else "Atur") }
                         Text("${(readingGoal.completedCount * 100 / readingGoal.targetPages.coerceAtLeast(1))}%", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
                     LinearProgressIndicator(
                         progress = { (readingGoal.completedCount.toFloat() / readingGoal.targetPages.coerceAtLeast(1)).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (readingGoal.isComplete) "Target hari ini tercapai. Alhamdulillah."
-                            else "Pengingat aktif: ${readingGoal.reminderMinutes.size} waktu pilihan",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        TextButton(
-                            onClick = {
-                                readingGoal = goalStore.togglePage(lastReadPage)
-                                if (readingGoal.isComplete) ReadingGoalReminderScheduler.cancel(context)
-                                else ReadingGoalReminderScheduler.scheduleNext(context)
-                            },
-                        ) {
-                            Text(
-                                if (lastReadPage in readingGoal.completedPages) "Batalkan halaman $lastReadPage"
-                                else "+ Catat halaman $lastReadPage",
-                            )
-                        }
-                    }
                     TextButton(
                         enabled = readingGoal.completedPages.isNotEmpty(),
                         onClick = { showManageReadPages = true },
                     ) {
-                        Text("Pilih halaman untuk dibatalkan")
+                        Text(if (english) "Select pages to unmark" else "Pilih halaman untuk dibatalkan")
                     }
                 }
             }
 
             HomeLatestVideosSection(
-                title = "Kajian terbaru",
-                actionLabel = "Semua kajian",
+                title = if (english) "Latest talks" else "Kajian terbaru",
+                actionLabel = if (english) "All talks" else "Semua kajian",
                 videos = newestKajian,
                 isLoading = kajianSnapshot == null,
                 isShorts = false,
-                emptyMessage = kajianSnapshot?.message ?: "Belum ada kajian terbaru.",
+                emptyMessage = if (english) "No recent talks available." else kajianSnapshot?.message ?: "Belum ada kajian terbaru.",
                 onSeeAll = onOpenAllKajian,
                 onPlay = { index -> onPlayKajian(newestKajian, index) },
             )
             HomeLatestVideosSection(
-                title = "Shorts terbaru",
-                actionLabel = "Semua Shorts",
+                title = if (english) "Latest Shorts" else "Shorts terbaru",
+                actionLabel = if (english) "All Shorts" else "Semua Shorts",
                 videos = newestShorts,
                 isLoading = kajianSnapshot == null,
                 isShorts = true,
-                emptyMessage = kajianSnapshot?.message ?: "Belum ada Shorts terbaru.",
+                emptyMessage = if (english) "No recent Shorts available." else kajianSnapshot?.message ?: "Belum ada Shorts terbaru.",
                 onSeeAll = onOpenAllShorts,
                 onPlay = { index -> onPlayShorts(newestShorts, index) },
             )
@@ -328,8 +309,8 @@ fun HomeScreen(
                 ) {
                     Text("✓", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Column {
-                        Text("Tersimpan di perangkat", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Text("Halaman mushaf yang pernah dibuka disiapkan agar lebih cepat dibaca lagi.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (english) "Saved on this device" else "Tersimpan di perangkat", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(if (english) "Recently opened mushaf pages are kept ready for quicker reading." else "Halaman mushaf yang pernah dibuka disiapkan agar lebih cepat dibaca lagi.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -340,9 +321,11 @@ fun HomeScreen(
     if (showGoalSettings) {
         ReadingGoalSettingsDialog(
             snapshot = readingGoal,
+            currentPage = lastReadPage,
             onDismiss = { showGoalSettings = false },
-            onSave = { targetPages, reminderMinutes ->
-                readingGoal = goalStore.updateSettings(targetPages, reminderMinutes)
+            onSave = { targetPages, reminderMinutes, khatamDate ->
+                readingGoal = goalStore.updateSettings(targetPages, reminderMinutes, khatamDate)
+                DailySunnahWidgetProvider.updateAll(context)
                 ReadingGoalReminderScheduler.scheduleNext(context)
                 if (reminderMinutes.isNotEmpty() && Build.VERSION.SDK_INT >= 33 &&
                     context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -357,9 +340,11 @@ fun HomeScreen(
     if (showManageReadPages) {
         ManageReadPagesDialog(
             completedPages = readingGoal.completedPages,
+            english = english,
             onDismiss = { showManageReadPages = false },
             onUnmark = { pages ->
                 readingGoal = goalStore.unmarkPagesRead(pages)
+                DailySunnahWidgetProvider.updateAll(context)
                 if (readingGoal.isComplete) ReadingGoalReminderScheduler.cancel(context)
                 else ReadingGoalReminderScheduler.scheduleNext(context)
                 showManageReadPages = false
@@ -371,6 +356,7 @@ fun HomeScreen(
 @Composable
 private fun ManageReadPagesDialog(
     completedPages: Set<Int>,
+    english: Boolean,
     onDismiss: () -> Unit,
     onUnmark: (Set<Int>) -> Unit,
 ) {
@@ -379,12 +365,12 @@ private fun ManageReadPagesDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Kelola halaman selesai") },
+        title = { Text(if (english) "Manage completed pages" else "Kelola halaman selesai") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Pilih halaman yang ingin dibatalkan dari progres hari ini.")
+                Text(if (english) "Select pages to remove from today’s progress." else "Pilih halaman yang ingin dibatalkan dari progres hari ini.")
                 if (sortedPages.isEmpty()) {
-                    Text("Belum ada halaman yang ditandai selesai.")
+                    Text(if (english) "No pages have been marked complete." else "Belum ada halaman yang ditandai selesai.")
                 } else {
                     LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
                         items(sortedPages, key = { it }) { page ->
@@ -400,7 +386,7 @@ private fun ManageReadPagesDialog(
                                         selectedPages = if (checked) selectedPages + page else selectedPages - page
                                     },
                                 )
-                                Text("Halaman $page", modifier = Modifier.weight(1f))
+                                Text(if (english) "Page $page" else "Halaman $page", modifier = Modifier.weight(1f))
                             }
                         }
                     }
@@ -411,9 +397,9 @@ private fun ManageReadPagesDialog(
             TextButton(
                 enabled = selectedPages.isNotEmpty(),
                 onClick = { onUnmark(selectedPages) },
-            ) { Text("Batalkan tanda (${selectedPages.size})") }
+            ) { Text(if (english) "Unmark (${selectedPages.size})" else "Batalkan tanda (${selectedPages.size})") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Kembali") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (english) "Back" else "Kembali") } },
     )
 }
 
@@ -428,6 +414,7 @@ private fun HomeLatestVideosSection(
     onSeeAll: () -> Unit,
     onPlay: (Int) -> Unit,
 ) {
+    val english = LocalAppEnglish.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -441,7 +428,7 @@ private fun HomeLatestVideosSection(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
             ) {
                 Text(
-                    if (isLoading) "Memuat video terbaru…" else emptyMessage,
+                    if (isLoading) if (english) "Loading latest videos…" else "Memuat video terbaru…" else emptyMessage,
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -458,7 +445,7 @@ private fun HomeLatestVideosSection(
                             .size(width = if (isShorts) 156.dp else 252.dp, height = if (isShorts) 330.dp else 252.dp)
                             .clickable { onPlay(index) },
                         shape = RoundedCornerShape(18.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFA)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     ) {
                         Column {
                             KajianThumbnail(
@@ -489,19 +476,6 @@ private fun HomeLatestVideosSection(
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun HomePrayerShortcut(icon: String, label: String, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier.size(38.dp).semantics { contentDescription = label }.clickable(onClick = onClick),
-        shape = CircleShape,
-        color = Color.White.copy(alpha = 0.13f),
-    ) {
-        androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
-            Text(icon, color = Color.White, style = MaterialTheme.typography.titleMedium)
         }
     }
 }

@@ -35,10 +35,20 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import id.kasirq.dailysunnah.kajian.data.KajianCatalogRepository
+import id.kasirq.dailysunnah.kajian.data.KajianCatalogSnapshot
+import id.kasirq.dailysunnah.kajian.data.KajianFeedSettings
 import id.kasirq.dailysunnah.kajian.data.KajianEndBehavior
 import id.kasirq.dailysunnah.kajian.data.KajianPlaybackPreferences
 import id.kasirq.dailysunnah.kajian.data.KajianVideo
+import id.kasirq.dailysunnah.other.AppLanguagePreference
+import id.kasirq.dailysunnah.other.AppSettingsStore
 import kotlin.math.abs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val SHORTS_APP_REFERER = "https://id.kasirq.dailysunnah/"
 private const val SHORTS_APP_ORIGIN = "https://id.kasirq.dailysunnah"
@@ -46,6 +56,8 @@ private const val SHORTS_LOG_TAG = "KajianShorts"
 private val SHORTS_INTERNAL_YOUTUBE_HOSTS = setOf("www.youtube.com", "youtube.com", "www.youtube-nocookie.com", "youtube-nocookie.com")
 
 class ShortsFeedActivity : ComponentActivity() {
+    private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val english: Boolean by lazy { AppSettingsStore(applicationContext).language() == AppLanguagePreference.ENGLISH }
     private lateinit var root: FrameLayout
     private lateinit var contentRoot: FrameLayout
     private lateinit var webView: WebView
@@ -69,6 +81,12 @@ class ShortsFeedActivity : ComponentActivity() {
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     private var priorSystemUiVisibility = 0
     private var priorRequestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    private var nextCatalogOffset = 0
+    private var hasMoreCatalogVideos = false
+    private var loadingCatalogPage = false
+    private var catalogChannelName: String? = null
+    private var catalogSearchQuery: String? = null
+    private var catalogFeedSettings = KajianFeedSettings.DEFAULT
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,6 +98,20 @@ class ShortsFeedActivity : ComponentActivity() {
         val thumbnails = intent.getStringArrayListExtra(EXTRA_THUMBNAILS).orEmpty()
         val durations = intent.getIntegerArrayListExtra(EXTRA_DURATIONS).orEmpty()
         val publishedAt = intent.getStringArrayListExtra(EXTRA_PUBLISHED_AT).orEmpty()
+        nextCatalogOffset = intent.getIntExtra(EXTRA_NEXT_OFFSET, 0).coerceAtLeast(0)
+        hasMoreCatalogVideos = intent.getBooleanExtra(EXTRA_HAS_MORE, false)
+        catalogChannelName = intent.getStringExtra(EXTRA_CHANNEL_NAME)
+        catalogSearchQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY)
+        catalogFeedSettings = KajianFeedSettings(
+            sortOrder = intent.getStringExtra(EXTRA_SORT_ORDER) ?: KajianFeedSettings.DEFAULT.sortOrder,
+            contentTypes = intent.getStringArrayListExtra(EXTRA_CONTENT_TYPES)
+                .orEmpty()
+                .mapNotNull { apiValue -> KajianVideo.ContentType.entries.firstOrNull { it.apiValue == apiValue } }
+                .toSet()
+                .ifEmpty { KajianFeedSettings.DEFAULT.contentTypes },
+            minDurationSeconds = intent.getIntExtra(EXTRA_MIN_DURATION, -1).takeIf { it >= 0 },
+            maxDurationSeconds = intent.getIntExtra(EXTRA_MAX_DURATION, -1).takeIf { it >= 0 },
+        )
         videos = ids.indices.mapNotNull { index ->
             val id = ids.getOrNull(index)?.takeIf(VIDEO_ID_PATTERN::matches) ?: return@mapNotNull null
             KajianVideo(
@@ -138,9 +170,9 @@ class ShortsFeedActivity : ComponentActivity() {
             setPadding(dp(8), 0, dp(14), 0)
             setBackgroundColor(0x33000000)
         }
-        val back = textView("‹", 34f, Color.WHITE).apply {
+        val back = textView("‹", 24f, Color.WHITE).apply {
             gravity = Gravity.CENTER
-            contentDescription = "Kembali"
+            contentDescription = if (english) "Back" else "Kembali"
             setOnClickListener { finish() }
         }
         topBar.addView(back, LinearLayout.LayoutParams(dp(48), MATCH_PARENT))
@@ -151,11 +183,11 @@ class ShortsFeedActivity : ComponentActivity() {
         contentRoot.addView(topBar, FrameLayout.LayoutParams(MATCH_PARENT, dp(54), Gravity.TOP))
 
         val actions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
-        val saveAction = createAction("Simpan", bookmark = true) { toggleSaved() }
+        val saveAction = createAction(if (english) "Save" else "Simpan", bookmark = true) { toggleSaved() }
         saveIcon = saveAction.first
         saveLabel = saveAction.second
         actions.addView(saveAction.third, LinearLayout.LayoutParams(MATCH_PARENT, dp(84)))
-        actions.addView(createAction("Bagikan", icon = "↗") { shareCurrentVideo() }.third, LinearLayout.LayoutParams(MATCH_PARENT, dp(84)))
+        actions.addView(createAction(if (english) "Share" else "Bagikan", icon = "↗") { shareCurrentVideo() }.third, LinearLayout.LayoutParams(MATCH_PARENT, dp(84)))
         contentRoot.addView(
             actions,
             FrameLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.BOTTOM).apply {
@@ -172,7 +204,7 @@ class ShortsFeedActivity : ComponentActivity() {
             )
             setPadding(dp(18), dp(28), dp(92), dp(14))
         }
-        statusLabel = textView("Menghubungkan ke YouTube…", 11f, 0xFFD0D0D0.toInt())
+        statusLabel = textView(if (english) "Connecting to YouTube…" else "Menghubungkan ke YouTube…", 11f, 0xFFD0D0D0.toInt())
         details.addView(statusLabel, LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         titleLabel = textView("", 15f, Color.WHITE, bold = true).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
         details.addView(titleLabel, LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(5) })
@@ -207,7 +239,7 @@ class ShortsFeedActivity : ComponentActivity() {
                     super.onReceivedError(view, request, error)
                     if (request.isForMainFrame) {
                         Log.e(SHORTS_LOG_TAG, "Embed load failed: ${error.errorCode}")
-                        updateStatus("Video gagal dimuat. Periksa koneksi internet.")
+                        updateStatus(if (english) "Video could not load. Check your internet connection." else "Video gagal dimuat. Periksa koneksi internet.")
                     }
                 }
 
@@ -222,7 +254,7 @@ class ShortsFeedActivity : ComponentActivity() {
                         }
                         return false
                     }
-                    updateStatus("Tautan di luar YouTube diblokir di feed Shorts")
+                    updateStatus(if (english) "Links outside YouTube are blocked in Shorts." else "Tautan di luar YouTube diblokir di feed Shorts")
                     return true
                 }
             }
@@ -272,7 +304,16 @@ class ShortsFeedActivity : ComponentActivity() {
                     val dx = event.rawX - touchStartX
                     val dy = event.rawY - touchStartY
                     if (abs(dy) > touchSlop && abs(dy) > abs(dx) * 1.2f) {
-                        wasVerticalSwipe = true
+                        if (!wasVerticalSwipe) {
+                            wasVerticalSwipe = true
+                            // Cancel the iframe's long-press gesture as soon as the
+                            // vertical feed swipe wins, so YouTube cannot latch 2x speed.
+                            val cancelEvent = MotionEvent.obtain(event).apply {
+                                action = MotionEvent.ACTION_CANCEL
+                            }
+                            view.onTouchEvent(cancelEvent)
+                            cancelEvent.recycle()
+                        }
                         view.parent?.requestDisallowInterceptTouchEvent(true)
                         val nextIndex = if (dy < 0f) currentIndex + 1 else currentIndex - 1
                         val resistance = if (nextIndex in videos.indices) 1f else 0.28f
@@ -311,6 +352,13 @@ class ShortsFeedActivity : ComponentActivity() {
         val canMove = targetIndex in videos.indices
         val distanceThreshold = contentRoot.height * 0.18f
         val shouldAdvance = canMove && (abs(deltaY) >= distanceThreshold || abs(velocityY) > dp(900))
+        val shouldLoadNext = direction > 0 && targetIndex == videos.size && hasMoreCatalogVideos &&
+            (abs(deltaY) >= distanceThreshold || abs(velocityY) > dp(900))
+        if (shouldLoadNext) {
+            settleBackToCenter()
+            loadNextShorts(advanceWhenReady = true)
+            return
+        }
         if (!shouldAdvance) {
             settleBackToCenter()
             return
@@ -332,7 +380,7 @@ class ShortsFeedActivity : ComponentActivity() {
                 currentIndex = targetIndex
                 handledEndedVideoId = null
                 renderCurrentVideo()
-                statusLabel.text = "Memuat video berikutnya…"
+                statusLabel.text = if (english) "Loading next video…" else "Memuat video berikutnya…"
                 val id = currentVideo().youtubeId
                 webView.evaluateJavascript("if(window.loadDailyShort){window.loadDailyShort('$id')}", null)
                 contentRoot.translationY = -exitOffset
@@ -361,12 +409,14 @@ class ShortsFeedActivity : ComponentActivity() {
 
     private fun renderCurrentVideo() {
         val video = currentVideo()
-        positionLabel.text = "${currentIndex + 1} dari ${videos.size}"
+        KajianCatalogRepository(applicationContext).recordPlayback(video)
+        val totalLabel = if (hasMoreCatalogVideos) "${videos.size}+" else videos.size.toString()
+        positionLabel.text = if (english) "${currentIndex + 1} of $totalLabel" else "${currentIndex + 1} dari $totalLabel"
         categoryLabel.text = video.category
         titleLabel.text = video.title
         channelLabel.text = "${video.channelName} · ${video.category}"
         val isSaved = video.youtubeId in savedVideoIds
-        saveLabel.text = if (isSaved) "Tersimpan" else "Simpan"
+        saveLabel.text = if (english) { if (isSaved) "Saved" else "Save" } else { if (isSaved) "Tersimpan" else "Simpan" }
         saveIcon.setImageDrawable(BookmarkDrawable(if (isSaved) 0xFFE5C36B.toInt() else Color.WHITE, isSaved))
     }
 
@@ -382,20 +432,64 @@ class ShortsFeedActivity : ComponentActivity() {
         when (KajianPlaybackPreferences(applicationContext).endBehavior()) {
             KajianEndBehavior.NEXT -> {
                 if (currentIndex + 1 in videos.indices) {
-                    updateStatus("Video selesai · memutar video berikutnya")
+                    updateStatus(if (english) "Video finished · playing next video" else "Video selesai · memutar video berikutnya")
                     contentRoot.post { animateToVideo(currentIndex + 1, moveForward = true) }
+                } else if (hasMoreCatalogVideos) {
+                    updateStatus(if (english) "Loading next video…" else "Memuat video berikutnya…")
+                    loadNextShorts(advanceWhenReady = true)
                 } else {
-                    updateStatus("Video terakhir selesai")
+                    updateStatus(if (english) "Last video finished" else "Video terakhir selesai")
                     webView.post { webView.evaluateJavascript("if(window.pauseDailyShort){window.pauseDailyShort()}", null) }
                 }
             }
             KajianEndBehavior.STOP -> {
-                updateStatus("Video selesai")
+                updateStatus(if (english) "Video finished" else "Video selesai")
                 webView.post { webView.evaluateJavascript("if(window.pauseDailyShort){window.pauseDailyShort()}", null) }
             }
             KajianEndBehavior.REPLAY -> {
-                updateStatus("Memutar ulang video")
+                updateStatus(if (english) "Replaying video" else "Memutar ulang video")
                 webView.post { webView.evaluateJavascript("if(window.replayDailyShort){window.replayDailyShort()}", null) }
+            }
+        }
+    }
+
+    private fun loadNextShorts(advanceWhenReady: Boolean = false) {
+        if (loadingCatalogPage || !hasMoreCatalogVideos) return
+        loadingCatalogPage = true
+        activityScope.launch {
+            var nextShorts = emptyList<KajianVideo>()
+            var failure: String? = null
+            while (hasMoreCatalogVideos && nextShorts.isEmpty()) {
+                val page = withContext(Dispatchers.IO) {
+                    KajianCatalogRepository(applicationContext).loadNextPage(
+                        channelName = catalogChannelName,
+                        searchQuery = catalogSearchQuery,
+                        offset = nextCatalogOffset,
+                        feedSettings = catalogFeedSettings,
+                    )
+                }
+                if (page.message != null) {
+                    failure = page.message
+                    break
+                }
+                nextCatalogOffset = page.nextOffset
+                hasMoreCatalogVideos = page.hasMore
+                val loadedIds = videos.mapTo(mutableSetOf()) { it.youtubeId }
+                nextShorts = page.videos.filter {
+                    it.contentType == KajianVideo.ContentType.SHORT && loadedIds.add(it.youtubeId)
+                }
+            }
+            loadingCatalogPage = false
+            if (nextShorts.isNotEmpty()) {
+                videos = videos + nextShorts
+                if (advanceWhenReady) animateToVideo(currentIndex + 1, moveForward = true)
+            } else if (failure != null) {
+                updateStatus(if (english) "Could not load the next videos. Swipe up to retry." else "Video berikutnya gagal dimuat. Geser ke atas untuk mencoba lagi.")
+            } else if (advanceWhenReady) {
+                updateStatus(if (english) "No more Shorts available" else "Tidak ada Shorts berikutnya")
+                webView.post { webView.evaluateJavascript("if(window.pauseDailyShort){window.pauseDailyShort()}", null) }
+            } else {
+                updateStatus(if (english) "No more Shorts available" else "Tidak ada Shorts berikutnya")
             }
         }
     }
@@ -406,7 +500,7 @@ class ShortsFeedActivity : ComponentActivity() {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, "${video.title}\nhttps://www.youtube.com/watch?v=${video.youtubeId}")
         }
-        startActivity(Intent.createChooser(send, "Bagikan video"))
+        startActivity(Intent.createChooser(send, if (english) "Share video" else "Bagikan video"))
     }
 
     private fun currentVideo() = videos[currentIndex]
@@ -476,6 +570,7 @@ class ShortsFeedActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        activityScope.cancel()
         if (fullscreenView != null) hideFullscreen()
         if (::webView.isInitialized) {
             webView.stopLoading()
@@ -490,31 +585,31 @@ class ShortsFeedActivity : ComponentActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private inner class PlayerBridge {
-        @JavascriptInterface fun onReady() = updateStatus("Player siap · video akan diputar otomatis")
+        @JavascriptInterface fun onReady() = updateStatus(if (english) "Player ready · video will start automatically" else "Player siap · video akan diputar otomatis")
         @JavascriptInterface fun onState(state: Int) {
             if (state == 1) handledEndedVideoId = null
             updateStatus(when (state) {
-                0 -> "Video selesai"
-                1 -> "Sedang diputar"
-                2 -> "Dijeda"
-                3 -> "Memuat video…"
-                5 -> "Player siap diputar"
-                else -> "Menghubungkan ke YouTube…"
+                0 -> if (english) "Video finished" else "Video selesai"
+                1 -> if (english) "Playing" else "Sedang diputar"
+                2 -> if (english) "Paused" else "Dijeda"
+                3 -> if (english) "Loading video…" else "Memuat video…"
+                5 -> if (english) "Player ready" else "Player siap diputar"
+                else -> if (english) "Connecting to YouTube…" else "Menghubungkan ke YouTube…"
             })
             if (state == 0) webView.post { handleVideoEnded() }
         }
         @JavascriptInterface fun onError(code: Int) {
             Log.e(SHORTS_LOG_TAG, "Short player error: $code")
             updateStatus(when (code) {
-                2 -> "ID video tidak valid"
-                5 -> "Video tidak didukung oleh player perangkat ini"
-                100 -> "Video privat, dihapus, atau tidak tersedia"
-                101, 150 -> "Pemilik video menonaktifkan pemutaran di aplikasi lain"
-                153 -> "YouTube gagal memverifikasi aplikasi"
-                else -> "Video gagal diputar (kode $code)"
+                2 -> if (english) "Invalid video ID" else "ID video tidak valid"
+                5 -> if (english) "This device’s player does not support the video" else "Video tidak didukung oleh player perangkat ini"
+                100 -> if (english) "Video is private, deleted, or unavailable" else "Video privat, dihapus, atau tidak tersedia"
+                101, 150 -> if (english) "The owner disabled playback in other apps" else "Pemilik video menonaktifkan pemutaran di aplikasi lain"
+                153 -> if (english) "YouTube could not verify the app" else "YouTube gagal memverifikasi aplikasi"
+                else -> if (english) "Video playback failed (code $code)" else "Video gagal diputar (kode $code)"
             })
         }
-        @JavascriptInterface fun onAutoplayBlocked() = updateStatus("Ketuk tombol putar pada video")
+        @JavascriptInterface fun onAutoplayBlocked() = updateStatus(if (english) "Tap the video’s play button" else "Ketuk tombol putar pada video")
     }
 
     private fun shortPlayerHtml(videoId: String): String = """
@@ -527,30 +622,40 @@ class ShortsFeedActivity : ComponentActivity() {
           <script>
             var player;
             var dailyShortId = '$videoId';
-            var normalSpeedVideoId = dailyShortId;
             var dailyShortStarted = false;
+            var rateResetToken = 0;
+            function resetRateForCurrentShort() {
+              var token = ++rateResetToken;
+              var targetId = dailyShortId;
+              [0, 100, 250, 500, 900].forEach(function(delay) {
+                setTimeout(function() {
+                  if (token !== rateResetToken || targetId !== dailyShortId || !player || !player.getPlaybackRate) return;
+                  if (player.getPlaybackRate() !== 1) player.setPlaybackRate(1);
+                }, delay);
+              });
+            }
             function onYouTubeIframeAPIReady() {
               player = new YT.Player('player', {
                 width: '100%', height: '100%', videoId: dailyShortId,
                 playerVars: { autoplay: 1, controls: 1, enablejsapi: 1, playsinline: 1,
-                  origin: '$SHORTS_APP_ORIGIN', hl: 'id', rel: 0 },
+                  origin: '$SHORTS_APP_ORIGIN', hl: '${if (english) "en" else "id"}', rel: 0 },
                 events: {
                   onReady: function() {
                     player.setPlaybackRate(1);
-                    normalSpeedVideoId = dailyShortId;
+                    resetRateForCurrentShort();
                     DailySunnah.onReady();
                   },
                   onStateChange: function(event) {
                     var activeVideoId = player.getVideoData().video_id;
-                    if (activeVideoId === dailyShortId && event.data === YT.PlayerState.CUED && normalSpeedVideoId !== dailyShortId) {
+                    if (activeVideoId === dailyShortId && event.data === YT.PlayerState.CUED) {
                       player.setPlaybackRate(1);
-                      normalSpeedVideoId = dailyShortId;
+                      resetRateForCurrentShort();
                       player.playVideo();
-                    } else if (activeVideoId === dailyShortId && event.data === YT.PlayerState.PLAYING && normalSpeedVideoId !== dailyShortId) {
-                      player.setPlaybackRate(1);
-                      normalSpeedVideoId = dailyShortId;
                     }
-                    if (activeVideoId === dailyShortId && event.data === YT.PlayerState.PLAYING) dailyShortStarted = true;
+                    if (activeVideoId === dailyShortId && event.data === YT.PlayerState.PLAYING) {
+                      if (player.getPlaybackRate() !== 1) player.setPlaybackRate(1);
+                      dailyShortStarted = true;
+                    }
                     DailySunnah.onState(event.data);
                   },
                   onPlaybackRateChange: function(event) {
@@ -565,11 +670,12 @@ class ShortsFeedActivity : ComponentActivity() {
             }
             function loadDailyShort(id) {
               dailyShortId = id;
-              normalSpeedVideoId = '';
               dailyShortStarted = false;
               if (player && player.cueVideoById) {
                 player.pauseVideo();
+                player.setPlaybackRate(1);
                 player.cueVideoById({videoId: id, startSeconds: 0});
+                resetRateForCurrentShort();
               }
             }
             function replayDailyShort() {
@@ -593,10 +699,25 @@ class ShortsFeedActivity : ComponentActivity() {
         const val EXTRA_DURATIONS = "short_durations"
         const val EXTRA_PUBLISHED_AT = "short_published_at"
         const val EXTRA_INITIAL_INDEX = "short_initial_index"
+        const val EXTRA_HAS_MORE = "short_has_more"
+        const val EXTRA_NEXT_OFFSET = "short_next_offset"
+        const val EXTRA_CHANNEL_NAME = "short_channel_name"
+        const val EXTRA_SEARCH_QUERY = "short_search_query"
+        const val EXTRA_SORT_ORDER = "short_sort_order"
+        const val EXTRA_CONTENT_TYPES = "short_content_types"
+        const val EXTRA_MIN_DURATION = "short_min_duration"
+        const val EXTRA_MAX_DURATION = "short_max_duration"
         val VIDEO_ID_PATTERN = Regex("[A-Za-z0-9_-]{11}")
         private const val MATCH_PARENT = ViewGroup.LayoutParams.MATCH_PARENT
 
-        fun newIntent(context: Context, videos: List<KajianVideo>, initialIndex: Int): Intent =
+        fun newIntent(
+            context: Context,
+            videos: List<KajianVideo>,
+            initialIndex: Int,
+            catalogSnapshot: KajianCatalogSnapshot? = null,
+            channelName: String? = null,
+            searchQuery: String? = null,
+        ): Intent =
             Intent(context, ShortsFeedActivity::class.java).apply {
                 putStringArrayListExtra(EXTRA_IDS, ArrayList(videos.map { it.youtubeId }))
                 putStringArrayListExtra(EXTRA_TITLES, ArrayList(videos.map { it.title }))
@@ -607,6 +728,16 @@ class ShortsFeedActivity : ComponentActivity() {
                 putIntegerArrayListExtra(EXTRA_DURATIONS, ArrayList(videos.map { it.durationSeconds }))
                 putStringArrayListExtra(EXTRA_PUBLISHED_AT, ArrayList(videos.map { it.publishedAt.orEmpty() }))
                 putExtra(EXTRA_INITIAL_INDEX, initialIndex)
+                catalogSnapshot?.let { snapshot ->
+                    putExtra(EXTRA_HAS_MORE, snapshot.hasMore)
+                    putExtra(EXTRA_NEXT_OFFSET, snapshot.nextOffset)
+                    putExtra(EXTRA_SORT_ORDER, snapshot.feedSettings.sortOrder)
+                    putStringArrayListExtra(EXTRA_CONTENT_TYPES, ArrayList(snapshot.feedSettings.contentTypes.map { it.apiValue }))
+                    putExtra(EXTRA_MIN_DURATION, snapshot.feedSettings.minDurationSeconds ?: -1)
+                    putExtra(EXTRA_MAX_DURATION, snapshot.feedSettings.maxDurationSeconds ?: -1)
+                }
+                putExtra(EXTRA_CHANNEL_NAME, channelName)
+                putExtra(EXTRA_SEARCH_QUERY, searchQuery)
             }
     }
 }

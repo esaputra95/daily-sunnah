@@ -23,6 +23,15 @@ data class KajianCatalogSnapshot(
     val message: String? = null,
     val feedSettings: KajianFeedSettings = KajianFeedSettings.DEFAULT,
     val channels: List<KajianChannel> = emptyList(),
+    val hasMore: Boolean = false,
+    val nextOffset: Int = 0,
+)
+
+data class KajianCatalogPage(
+    val videos: List<KajianVideo>,
+    val hasMore: Boolean,
+    val nextOffset: Int,
+    val message: String? = null,
 )
 
 data class KajianChannel(

@@ -25,10 +25,14 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import id.kasirq.dailysunnah.kajian.data.KajianEndBehavior
+import id.kasirq.dailysunnah.kajian.data.KajianCatalogRepository
 import id.kasirq.dailysunnah.kajian.data.KajianPlaybackPreferences
 import id.kasirq.dailysunnah.kajian.data.KajianVideo
+import id.kasirq.dailysunnah.other.AppLanguagePreference
+import id.kasirq.dailysunnah.other.AppSettingsStore
 
 class KajianPlayerActivity : ComponentActivity() {
+    private val english: Boolean by lazy { AppSettingsStore(applicationContext).language() == AppLanguagePreference.ENGLISH }
     private lateinit var root: FrameLayout
     private lateinit var content: LinearLayout
     private lateinit var playerSurface: FrameLayout
@@ -56,6 +60,7 @@ class KajianPlayerActivity : ComponentActivity() {
         }
         currentVideoIndex = intent.getIntExtra(EXTRA_INITIAL_INDEX, 0).coerceIn(videos.indices)
         val video = currentVideo()
+        KajianCatalogRepository(applicationContext).recordPlayback(video)
 
         window.statusBarColor = COLOR_BACKGROUND
         window.navigationBarColor = COLOR_BACKGROUND
@@ -98,7 +103,7 @@ class KajianPlayerActivity : ComponentActivity() {
                     super.onReceivedError(view, request, error)
                     if (request.isForMainFrame) {
                         Log.e(TAG, "YouTube main-frame load failed: ${error.errorCode}")
-                        showPlayerError("Video gagal dimuat. Periksa koneksi lalu ketuk muat ulang.")
+                        showPlayerError(if (english) "Video could not load. Check your connection and tap reload." else "Video gagal dimuat. Periksa koneksi lalu ketuk muat ulang.")
                     }
                 }
 
@@ -108,20 +113,20 @@ class KajianPlayerActivity : ComponentActivity() {
                     val host = uri.host.orEmpty()
                     if (scheme == "intent" || scheme == "youtube" || scheme == "vnd.youtube") {
                         Log.w(TAG, "Blocked external YouTube app navigation: $uri")
-                        showPlaybackStatus("Video ini mencoba membuka aplikasi lain. Pemutaran tetap di Daily Sunnah.")
+                        showPlaybackStatus(if (english) "This video tried to open another app. Playback stays in Daily Sunnah." else "Video ini mencoba membuka aplikasi lain. Pemutaran tetap di Daily Sunnah.")
                         return true
                     }
                     if (scheme == "https" && host in INTERNAL_YOUTUBE_HOSTS) {
                         if (uri.path == "/watch" || uri.path.orEmpty().startsWith("/shorts/")) {
                             Log.w(TAG, "Blocked YouTube watch-page navigation: $uri")
-                            showPlaybackStatus("Gunakan tombol putar di player agar video tetap diputar di Daily Sunnah.")
+                            showPlaybackStatus(if (english) "Use the player’s play button to keep the video in Daily Sunnah." else "Gunakan tombol putar di player agar video tetap diputar di Daily Sunnah.")
                             return true
                         }
                         return false
                     }
                     if (!request.isForMainFrame) return false
                     Log.w(TAG, "Blocked external player navigation: $uri")
-                    showPlaybackStatus("Tautan eksternal diblokir. Putar video melalui kontrol player di atas.")
+                    showPlaybackStatus(if (english) "External link blocked. Play the video using the player controls above." else "Tautan eksternal diblokir. Putar video melalui kontrol player di atas.")
                     return true
                 }
 
@@ -140,7 +145,7 @@ class KajianPlayerActivity : ComponentActivity() {
                 }
 
                 override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
-                    showPlaybackStatus("Tautan di luar player tidak dibuka. Video tetap di Daily Sunnah.")
+                    showPlaybackStatus(if (english) "Links outside the player are blocked. The video stays in Daily Sunnah." else "Tautan di luar player tidak dibuka. Video tetap di Daily Sunnah.")
                     return false
                 }
 
@@ -161,7 +166,7 @@ class KajianPlayerActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(18), dp(24))
         }
-        playbackStatus = textView("Menghubungkan ke player…", 14f, COLOR_MUTED).apply {
+        playbackStatus = textView(if (english) "Connecting to player…" else "Menghubungkan ke player…", 14f, COLOR_MUTED).apply {
             setPadding(dp(12), dp(10), dp(12), dp(10))
             setBackgroundColor(COLOR_STATUS_BACKGROUND)
         }
@@ -191,16 +196,16 @@ class KajianPlayerActivity : ComponentActivity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(8), 0, dp(12), 0)
-        val back = textView("‹", 32f, COLOR_PRIMARY)
+        val back = textView("‹", 24f, COLOR_PRIMARY)
         back.gravity = Gravity.CENTER
-        back.contentDescription = "Kembali"
+        back.contentDescription = if (english) "Back" else "Kembali"
         back.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
         addView(back, LinearLayout.LayoutParams(dp(48), MATCH_PARENT))
-        addView(textView("Pemutar YouTube", 18f, COLOR_TEXT, bold = true),
+        addView(textView(if (english) "YouTube player" else "Pemutar YouTube", 18f, COLOR_TEXT, bold = true),
             LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { gravity = Gravity.CENTER_VERTICAL })
         val reload = textView("↻", 26f, COLOR_PRIMARY)
         reload.gravity = Gravity.CENTER
-        reload.contentDescription = "Muat ulang video"
+        reload.contentDescription = if (english) "Reload video" else "Muat ulang video"
         reload.setOnClickListener { retryPlayback() }
         addView(reload, LinearLayout.LayoutParams(dp(48), MATCH_PARENT))
     }
@@ -280,7 +285,7 @@ class KajianPlayerActivity : ComponentActivity() {
               player = new YT.Player('player', {
                 width: '100%', height: '100%', videoId: '$videoId',
                 playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, playsinline: 1,
-                  origin: '$APP_ORIGIN', hl: 'id', rel: 0 },
+                  origin: '$APP_ORIGIN', hl: '${if (english) "en" else "id"}', rel: 0 },
                 events: {
                   onReady: function() { DailySunnah.onReady(); },
                   onStateChange: function(event) { DailySunnah.onState(event.data); },
@@ -326,7 +331,7 @@ class KajianPlayerActivity : ComponentActivity() {
         if (::webView.isInitialized) {
             webView.visibility = View.VISIBLE
             webView.reload()
-            showPlaybackStatus("Menghubungkan ke player…")
+            showPlaybackStatus(if (english) "Connecting to player…" else "Menghubungkan ke player…")
         }
     }
 
@@ -380,28 +385,36 @@ class KajianPlayerActivity : ComponentActivity() {
                     currentVideoIndex++
                     handledEndedVideoId = null
                     val next = currentVideo()
+                    KajianCatalogRepository(applicationContext).recordPlayback(next)
                     playbackTitle.text = next.title
                     playbackMetadata.text = listOf(next.channelName, next.category).filter(String::isNotBlank).joinToString(" · ")
                     playbackDescription.text = next.description
-                    showPlaybackStatus("Memuat video berikutnya…")
+                    showPlaybackStatus(if (english) "Loading next video…" else "Memuat video berikutnya…")
                     webView.evaluateJavascript("if(window.loadKajianVideo){window.loadKajianVideo('${next.youtubeId}')}", null)
                 } else {
-                    showPlaybackStatus("Video terakhir selesai.")
+                    showPlaybackStatus(if (english) "Last video finished." else "Video terakhir selesai.")
                     webView.evaluateJavascript("if(window.pauseKajianVideo){window.pauseKajianVideo()}", null)
                 }
             }
             KajianEndBehavior.STOP -> {
-                showPlaybackStatus("Video selesai.")
+                showPlaybackStatus(if (english) "Video finished." else "Video selesai.")
                 webView.evaluateJavascript("if(window.pauseKajianVideo){window.pauseKajianVideo()}", null)
             }
             KajianEndBehavior.REPLAY -> {
-                showPlaybackStatus("Memutar ulang video.")
+                showPlaybackStatus(if (english) "Replaying video." else "Memutar ulang video.")
                 webView.evaluateJavascript("if(window.replayKajianVideo){window.replayKajianVideo()}", null)
             }
         }
     }
 
-    private fun playbackErrorMessage(code: Int): String = when (code) {
+    private fun playbackErrorMessage(code: Int): String = if (english) when (code) {
+        2 -> "Invalid video ID."
+        5 -> "This device’s HTML5 player cannot play the video."
+        100 -> "This video is private, deleted, or unavailable."
+        101, 150 -> "This video cannot play in Daily Sunnah because its owner disabled embedded playback. Try another video."
+        153 -> "YouTube could not verify the app identity for playback."
+        else -> "YouTube player failed to play the video (code $code)."
+    } else when (code) {
         2 -> "ID video tidak valid."
         5 -> "Video tidak dapat diputar oleh player HTML5 di perangkat ini."
         100 -> "Video ini privat, dihapus, atau tidak tersedia untuk akun ini."
@@ -412,17 +425,17 @@ class KajianPlayerActivity : ComponentActivity() {
 
     private inner class PlayerBridge {
         @android.webkit.JavascriptInterface
-        fun onReady() = showPlaybackStatus("Player siap. Ketuk tombol putar pada video.")
+        fun onReady() = showPlaybackStatus(if (english) "Player ready. Tap the video’s play button." else "Player siap. Ketuk tombol putar pada video.")
 
         @android.webkit.JavascriptInterface
         fun onState(state: Int) {
             if (state == 1) handledEndedVideoId = null
             val message = when (state) {
-                0 -> "Video selesai."
-                1 -> "Video sedang diputar di Daily Sunnah."
-                2 -> "Video dijeda."
-                3 -> "Video sedang dimuat…"
-                5 -> "Player siap. Ketuk tombol putar pada video."
+                0 -> if (english) "Video finished." else "Video selesai."
+                1 -> if (english) "Video playing in Daily Sunnah." else "Video sedang diputar di Daily Sunnah."
+                2 -> if (english) "Video paused." else "Video dijeda."
+                3 -> if (english) "Loading video…" else "Video sedang dimuat…"
+                5 -> if (english) "Player ready. Tap the video’s play button." else "Player siap. Ketuk tombol putar pada video."
                 else -> null
             }
             if (message != null) showPlaybackStatus(message)
@@ -436,7 +449,7 @@ class KajianPlayerActivity : ComponentActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun onAutoplayBlocked() = showPlaybackStatus("Putar video dengan mengetuk tombol pada player.")
+        fun onAutoplayBlocked() = showPlaybackStatus(if (english) "Tap the player button to play the video." else "Putar video dengan mengetuk tombol pada player.")
     }
 
     companion object {
