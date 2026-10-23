@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +14,8 @@ from ingest_kajian_catalog import (
     load_sources,
     parse_duration,
     should_run,
+    SupabaseClient,
+    run,
 )
 
 
@@ -164,6 +166,94 @@ class KajianCatalogIngestionTest(unittest.TestCase):
         is_due, trigger = should_run(settings)
         self.assertFalse(is_due)
         self.assertEqual(trigger, "none")
+
+    def test_backfill_runs_without_advancing_a_future_daily_schedule(self):
+        settings = {
+            "run_requested_at": None,
+            "next_run_at": "2099-01-01T00:00:00+00:00",
+        }
+        is_due, trigger = should_run(settings, backfill_pending=True)
+        self.assertTrue(is_due)
+        self.assertEqual(trigger, "backfill")
+
+    def test_due_daily_schedule_takes_precedence_over_backfill(self):
+        settings = {
+            "run_requested_at": None,
+            "next_run_at": "2000-01-01T00:00:00+00:00",
+        }
+        is_due, trigger = should_run(settings, backfill_pending=True)
+        self.assertTrue(is_due)
+        self.assertEqual(trigger, "schedule")
+
+    def test_playlist_page_returns_cursor_for_resumable_backfill(self):
+        client = YouTubeDataClient("fake_key")
+        with patch.object(client, "get", return_value={
+            "items": [
+                {"contentDetails": {"videoId": "abcdefghijk"}},
+                {"contentDetails": {"videoId": "bad"}},
+            ],
+            "nextPageToken": "cursor-page-2",
+        }) as request:
+            video_ids, cursor = client.playlist_video_page("PL123", "cursor-page-1", 50)
+        self.assertEqual(video_ids, ["abcdefghijk"])
+        self.assertEqual(cursor, "cursor-page-2")
+        request.assert_called_once_with(
+            "playlistItems", part="contentDetails", playlistId="PL123", maxResults="50", pageToken="cursor-page-1"
+        )
+
+    def test_existing_records_query_is_limited_to_current_candidates(self):
+        client = SupabaseClient("https://example.supabase.co", "secret")
+        with patch.object(client, "request", return_value=[{"youtube_video_id": "abcdefghijk"}]) as request:
+            records = client.video_records(["abcdefghijk"])
+        self.assertEqual(set(records), {"abcdefghijk"})
+        self.assertIn("youtube_video_id=in.(abcdefghijk)", request.call_args.args[1])
+
+    @patch.dict("os.environ", {
+        "YOUTUBE_DATA_API_KEY": "test-key",
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SECRET_KEY": "test-secret",
+        "FORCE_RUN": "false",
+    })
+    def test_backfill_run_leaves_next_scheduled_run_untouched(self):
+        source = Source(
+            "PL123", "Fiqih", "kajian", source_id="source-1",
+            backfill_status="queued", backfill_page_token="resume-token",
+            backfill_pages_processed=3, backfill_videos_processed=150,
+        )
+        supabase = Mock()
+        supabase.get_settings.return_value = {
+            "run_requested_at": None,
+            "next_run_at": "2099-01-01T00:00:00+00:00",
+            "default_review_status": "pending",
+        }
+        supabase.get_active_sources.return_value = [source]
+        supabase.is_run_in_progress.return_value = False
+        supabase.start_run.return_value = "run-1"
+        supabase.video_records.return_value = {}
+
+        youtube = Mock()
+        youtube.source_video_page.return_value = (["abcdefghijk"], None)
+        youtube.videos.return_value = {
+            "abcdefghijk": {
+                "snippet": {
+                    "title": "Arsip lama", "description": "", "channelTitle": "Channel",
+                    "channelId": "UC1", "publishedAt": "2020-01-01T00:00:00Z", "thumbnails": {},
+                },
+                "contentDetails": {"duration": "PT10M"},
+                "status": {"privacyStatus": "public", "embeddable": True},
+            }
+        }
+
+        with patch("ingest_kajian_catalog.SupabaseClient", return_value=supabase), patch(
+            "ingest_kajian_catalog.YouTubeDataClient", return_value=youtube
+        ):
+            self.assertEqual(run(), 0)
+
+        supabase.start_run.assert_called_once_with("backfill")
+        supabase.update_settings.assert_not_called()
+        youtube.source_video_page.assert_called_once_with(source, "resume-token", 50)
+        self.assertEqual(supabase.update_source_backfill.call_args.args[1], "completed")
+        self.assertEqual(supabase.update_source_backfill.call_args.kwargs["processed_video_ids"], ["abcdefghijk"])
 
     def test_source_max_videos_default_and_clamp(self):
         source_default = Source("PL1", "Fiqih", "kajian")

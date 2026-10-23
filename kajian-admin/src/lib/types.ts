@@ -25,6 +25,15 @@ export interface KajianSource {
   initial_review_status?: ReviewStatus;
   max_videos?: number;
   is_active: boolean;
+  backfill_status?: 'idle' | 'queued' | 'running' | 'paused' | 'completed' | 'failed';
+  backfill_page_token?: string | null;
+  backfill_pages_processed?: number;
+  backfill_videos_processed?: number;
+  backfill_last_video_id?: string | null;
+  backfill_error?: string | null;
+  backfill_requested_at?: string | null;
+  backfill_updated_at?: string | null;
+  backfill_completed_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -43,7 +52,7 @@ export interface KajianIngestionSettings {
 
 export interface KajianIngestionRun {
   id: string;
-  trigger_type: 'schedule' | 'manual';
+  trigger_type: 'schedule' | 'manual' | 'backfill';
   status: 'running' | 'success' | 'failed';
   started_at: string;
   finished_at: string | null;

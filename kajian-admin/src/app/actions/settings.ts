@@ -177,6 +177,58 @@ export async function saveIngestionSettingsAction(formData: FormData) {
   settingsRedirect("notice", `Jadwal disimpan. Sinkronisasi berikutnya sekitar ${new Date(nextRunAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB.`);
 }
 
+export async function manageSourceBackfillAction(formData: FormData) {
+  await requireAdmin();
+  const id = field(formData, "id");
+  const intent = field(formData, "intent");
+  if (!id) settingsRedirect("error", "ID sumber tidak valid.");
+  if (!["start", "resume", "pause"].includes(intent)) settingsRedirect("error", "Aksi backfill tidak valid.");
+
+  const supabase = await createClient();
+  const { data: source, error: readError } = await supabase
+    .from("kajian_sources")
+    .select("id,is_active,backfill_status")
+    .eq("id", id)
+    .maybeSingle();
+  if (readError) settingsRedirect("error", "Jalankan migration 202610230001_kajian_source_backfill.sql di Supabase terlebih dahulu.");
+  if (!source) settingsRedirect("error", "Sumber tidak ditemukan.");
+  if (intent !== "pause" && !source.is_active) settingsRedirect("error", "Aktifkan sumber sebelum memulai atau melanjutkan backfill.");
+  if (intent === "start" && ["queued", "running"].includes(source.backfill_status)) {
+    settingsRedirect("error", "Backfill sumber ini sudah berjalan atau sedang dalam antrean.");
+  }
+
+  const now = new Date().toISOString();
+  let values: Record<string, unknown>;
+  if (intent === "pause") {
+    if (!["queued", "running"].includes(source.backfill_status)) {
+      settingsRedirect("error", "Backfill sumber ini tidak sedang berjalan.");
+    }
+    values = { backfill_status: "paused", backfill_error: null, backfill_updated_at: now };
+  } else if (intent === "resume") {
+    if (!["paused", "failed"].includes(source.backfill_status)) {
+      settingsRedirect("error", "Hanya backfill yang dijeda atau gagal yang dapat dilanjutkan.");
+    }
+    values = { backfill_status: "queued", backfill_error: null, backfill_requested_at: now, backfill_updated_at: now, backfill_completed_at: null };
+  } else {
+    values = {
+      backfill_status: "queued",
+      backfill_page_token: null,
+      backfill_pages_processed: 0,
+      backfill_videos_processed: 0,
+      backfill_last_video_id: null,
+      backfill_error: null,
+      backfill_requested_at: now,
+      backfill_updated_at: now,
+      backfill_completed_at: null,
+    };
+  }
+
+  const { error } = await supabase.from("kajian_sources").update(values).eq("id", id);
+  if (error) settingsRedirect("error", error.message);
+  revalidatePath("/settings");
+  settingsRedirect("notice", intent === "pause" ? "Backfill dijeda." : intent === "resume" ? "Backfill dilanjutkan dari cursor terakhir." : "Backfill dimulai ulang dari video terbaru.");
+}
+
 export async function requestIngestionNowAction() {
   const user = await requireAdmin();
   const supabase = await createClient();

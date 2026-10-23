@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
-import { Activity, Clock3, Film, ListVideo, Plus, Radio, Settings2, Youtube } from "lucide-react";
+import { Activity, Archive, Clock3, Film, ListVideo, Pause, Play, Plus, Radio, RotateCcw, Settings2, Youtube } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import {
   deleteSourceAction,
+  manageSourceBackfillAction,
   requestIngestionNowAction,
   saveFeedSettingsAction,
   saveIngestionSettingsAction,
@@ -46,6 +47,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   ]);
 
   const sources = (sourcesResult.data ?? []) as KajianSource[];
+  const backfillReady = sources.every((source) => source.backfill_status !== undefined);
   const ingestion = ingestionResult.data as KajianIngestionSettings | null;
   const runs = (runsResult.data ?? []) as KajianIngestionRun[];
   const feed = feedResult.data as KajianFeedSettings | null;
@@ -136,6 +138,11 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
 
           <div className="mt-4 space-y-3">
             {sources.length === 0 && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Belum ada sumber terdaftar.</p>}
+            {sources.length > 0 && sources.every((source) => source.backfill_status === undefined) && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Fitur arsip video lama memerlukan migration <code>202610230001_kajian_source_backfill.sql</code> di Supabase.
+              </div>
+            )}
             {sources.map((source) => (
               <div key={source.id} className="rounded-xl border border-slate-200 p-4 bg-white shadow-2xs space-y-3">
                 <form action={saveSourceAction} className="space-y-3">
@@ -193,12 +200,47 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                     </div>
                   </div>
                 </form>
-                <div className="flex justify-between items-center pt-2 border-t border-slate-100 text-xs text-slate-500">
-                  <span>Batas maksimal: <strong>{source.max_videos ?? 10} video</strong> terbaru per siklus</span>
+                <div className="flex flex-wrap justify-between items-center gap-3 pt-2 border-t border-slate-100 text-xs text-slate-500">
+                  <span>Batas maksimal: <strong>{source.max_videos ?? 10} video</strong> terbaru per sinkronisasi rutin</span>
                   <form action={deleteSourceAction}>
                     <input type="hidden" name="id" value={source.id} />
                     <button className="font-medium text-rose-600 hover:text-rose-800 transition">Hapus sumber</button>
                   </form>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 px-3.5 py-3">
+                  <div className="flex items-start gap-2.5">
+                    <Archive className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+                    <div className="text-xs text-slate-600">
+                      <div className="font-semibold text-slate-800">
+                        Arsip lama: {({ idle: "Belum dimulai", queued: "Dalam antrean", running: "Berjalan", paused: "Dijeda", completed: "Selesai", failed: "Gagal" } as const)[source.backfill_status ?? "idle"]}
+                        {source.backfill_status === "completed" && source.backfill_completed_at ? ` · ${formatDateTime(source.backfill_completed_at)}` : ""}
+                      </div>
+                      <div className="mt-0.5">{source.backfill_pages_processed ?? 0} batch · {source.backfill_videos_processed ?? 0} video diproses</div>
+                      {source.backfill_error && <div className="mt-1 max-w-xl text-rose-700">{source.backfill_error}</div>}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(source.backfill_status === "queued" || source.backfill_status === "running") ? (
+                      <form action={manageSourceBackfillAction}>
+                        <input type="hidden" name="id" value={source.id} />
+                        <input type="hidden" name="intent" value="pause" />
+                        <button disabled={!backfillReady} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"><Pause className="h-3.5 w-3.5" /> Jeda</button>
+                      </form>
+                    ) : source.backfill_status === "paused" || source.backfill_status === "failed" ? (
+                      <form action={manageSourceBackfillAction}>
+                        <input type="hidden" name="id" value={source.id} />
+                        <input type="hidden" name="intent" value="resume" />
+                        <button disabled={!backfillReady || !source.is_active} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"><Play className="h-3.5 w-3.5" /> Lanjutkan</button>
+                      </form>
+                    ) : null}
+                    {source.backfill_status !== "queued" && source.backfill_status !== "running" && (
+                      <form action={manageSourceBackfillAction}>
+                        <input type="hidden" name="id" value={source.id} />
+                        <input type="hidden" name="intent" value="start" />
+                        <button disabled={!backfillReady || !source.is_active} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"><RotateCcw className="h-3.5 w-3.5" /> {source.backfill_status === "completed" ? "Ulangi arsip" : "Ambil arsip lama"}</button>
+                      </form>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -334,7 +376,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                 {runs.map((run) => (
                   <tr key={run.id} className="border-b border-slate-100 align-top">
                     <td className="py-3 pr-4 text-xs text-slate-600">{formatDateTime(run.started_at)}</td>
-                    <td className="py-3 pr-4">{run.trigger_type === "manual" ? "Manual" : "Jadwal"}</td>
+                    <td className="py-3 pr-4">{run.trigger_type === "manual" ? "Manual" : run.trigger_type === "backfill" ? "Arsip lama" : "Jadwal"}</td>
                     <td className="py-3 pr-4"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${run.status === "success" ? "bg-emerald-50 text-emerald-700" : run.status === "failed" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{run.status}</span></td>
                     <td className="py-3 pr-4">{run.videos_seen}</td><td className="py-3 pr-4">{run.candidates_written}</td><td className="py-3 pr-4">{run.removed_count}</td>
                     <td className="max-w-[260px] py-3 text-xs text-rose-700">{run.error_message || `Selesai ${run.finished_at ? formatDateTime(run.finished_at) : "sedang berjalan"}`}</td>

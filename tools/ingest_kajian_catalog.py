@@ -37,6 +37,15 @@ class Source:
         is_active: bool = True,
         initial_review_status: str = "pending",
         max_videos: int = 10,
+        source_id: str | None = None,
+        backfill_status: str = "idle",
+        backfill_page_token: str | None = None,
+        backfill_pages_processed: int = 0,
+        backfill_videos_processed: int = 0,
+        backfill_last_video_id: str | None = None,
+        backfill_error: str | None = None,
+        backfill_updated_at: str | None = None,
+        backfill_requested_at: str | None = None,
     ):
         self.source_identifier = source_identifier.strip()
         self.category = category.strip()
@@ -50,6 +59,15 @@ class Source:
             self.max_videos = max(1, min(val, 200))
         except (ValueError, TypeError):
             self.max_videos = 10
+        self.source_id = source_id
+        self.backfill_status = backfill_status or "idle"
+        self.backfill_page_token = backfill_page_token
+        self.backfill_pages_processed = int(backfill_pages_processed or 0)
+        self.backfill_videos_processed = int(backfill_videos_processed or 0)
+        self.backfill_last_video_id = backfill_last_video_id
+        self.backfill_error = backfill_error
+        self.backfill_updated_at = backfill_updated_at
+        self.backfill_requested_at = backfill_requested_at
 
     @property
     def playlist_id(self) -> str:
@@ -152,29 +170,34 @@ def calculate_next_run(settings: dict[str, Any] | None, current_time: datetime |
     return target_utc.isoformat()
 
 
-def should_run(settings: dict[str, Any] | None, force: bool = False) -> tuple[bool, str]:
+def should_run(
+    settings: dict[str, Any] | None,
+    force: bool = False,
+    backfill_pending: bool = False,
+) -> tuple[bool, str]:
     if force:
         return True, "manual"
-    if not settings:
-        return True, "schedule"
-
-    # 1. Manual run requested via panel ("Cek sekarang")
-    if settings.get("run_requested_at"):
+    if settings and settings.get("run_requested_at"):
         return True, "manual"
 
-    # 2. Check next scheduled time
+    if not settings:
+        return (True, "backfill") if backfill_pending else (True, "schedule")
+
     next_run_str = settings.get("next_run_at")
     if not next_run_str:
         return True, "schedule"
 
     try:
         next_run = datetime.fromisoformat(next_run_str.replace("Z", "+00:00"))
-        now_utc = datetime.now(timezone.utc)
-        if now_utc >= next_run:
+        if datetime.now(timezone.utc) >= next_run:
             return True, "schedule"
-    except Exception:
+    except (TypeError, ValueError):
         return True, "schedule"
 
+    # Backfill piggybacks on the existing 15-minute poller without advancing
+    # or changing the configured daily/interval schedule.
+    if backfill_pending:
+        return True, "backfill"
     return False, "none"
 
 
@@ -208,29 +231,51 @@ class YouTubeDataClient:
             raise ValueError(f"No uploads playlist found for channel: {identifier}")
         return uploads
 
+    def playlist_video_page(
+        self,
+        playlist_id: str,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> tuple[list[str], str | None]:
+        params = {
+            "part": "contentDetails",
+            "playlistId": playlist_id,
+            "maxResults": str(max(1, min(50, page_size))),
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        result = self.get("playlistItems", **params)
+        video_ids = [
+            item.get("contentDetails", {}).get("videoId", "")
+            for item in result.get("items", [])
+        ]
+        return [video_id for video_id in video_ids if VIDEO_ID.fullmatch(video_id)], result.get("nextPageToken")
+
     def playlist_video_ids(self, playlist_id: str, max_items: int = 150) -> list[str]:
         found: list[str] = []
         page_token: str | None = None
         while True:
             limit = min(50, max_items - len(found)) if max_items else 50
-            params = {"part": "contentDetails", "playlistId": playlist_id, "maxResults": str(max(1, limit))}
-            if page_token:
-                params["pageToken"] = page_token
-            result = self.get("playlistItems", **params)
-            for item in result.get("items", []):
-                video_id = item.get("contentDetails", {}).get("videoId", "")
-                if VIDEO_ID.fullmatch(video_id):
-                    found.append(video_id)
-            page_token = result.get("nextPageToken")
+            page_ids, page_token = self.playlist_video_page(playlist_id, page_token, max(1, limit))
+            found.extend(page_ids)
             if not page_token or (max_items and len(found) >= max_items):
                 return found[:max_items] if max_items else found
 
-    def source_video_ids(self, source: Source) -> list[str]:
+    def source_playlist_id(self, source: Source) -> str:
         if source.source_kind == "channel":
-            uploads_playlist_id = self.resolve_channel_uploads_playlist(source.source_identifier)
-            return self.playlist_video_ids(uploads_playlist_id, max_items=source.max_videos)
-        else:
-            return self.playlist_video_ids(source.source_identifier, max_items=source.max_videos)
+            return self.resolve_channel_uploads_playlist(source.source_identifier)
+        return source.source_identifier
+
+    def source_video_ids(self, source: Source) -> list[str]:
+        return self.playlist_video_ids(self.source_playlist_id(source), max_items=source.max_videos)
+
+    def source_video_page(
+        self,
+        source: Source,
+        page_token: str | None = None,
+        page_size: int = 50,
+    ) -> tuple[list[str], str | None]:
+        return self.playlist_video_page(self.source_playlist_id(source), page_token, page_size)
 
     def videos(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -315,6 +360,15 @@ class SupabaseClient:
                     is_active=True,
                     initial_review_status=init_status,
                     max_videos=max_v,
+                    source_id=str(item.get("id") or "") or None,
+                    backfill_status=str(item.get("backfill_status") or "idle"),
+                    backfill_page_token=item.get("backfill_page_token"),
+                    backfill_pages_processed=item.get("backfill_pages_processed", 0),
+                    backfill_videos_processed=item.get("backfill_videos_processed", 0),
+                    backfill_last_video_id=item.get("backfill_last_video_id"),
+                    backfill_error=item.get("backfill_error"),
+                    backfill_updated_at=item.get("backfill_updated_at"),
+                    backfill_requested_at=item.get("backfill_requested_at"),
                 ))
             return sources
         except Exception:
@@ -390,20 +444,62 @@ class SupabaseClient:
         except Exception as e:
             print(f"Warning: Failed to clear run_requested_at: {e}", file=sys.stderr)
 
-    def all_video_records(self) -> dict[str, dict[str, Any]]:
-        base_url = (
-            f"{self.table_url}?select=youtube_video_id,category,content_type,review_status,reviewed_at"
-            "&order=created_at.asc&limit=1000"
-        )
-        records: list[dict[str, Any]] = []
-        offset = 0
-        while True:
-            page = self.request("GET", f"{base_url}&offset={offset}")
-            records.extend(page)
-            if len(page) < 1_000:
-                break
-            offset += len(page)
-        return {record["youtube_video_id"]: record for record in records}
+    def video_records(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
+        records: dict[str, dict[str, Any]] = {}
+        # Only read editorial fields for this run's candidates. This keeps the
+        # daily sync's Supabase and YouTube work bounded as the catalog grows.
+        for start in range(0, len(video_ids), 50):
+            batch = video_ids[start : start + 50]
+            if not batch:
+                continue
+            values = ",".join(batch)
+            url = (
+                f"{self.table_url}?select=youtube_video_id,category,content_type,review_status,reviewed_at"
+                f"&youtube_video_id=in.({values})"
+            )
+            page = self.request("GET", url)
+            for record in page or []:
+                records[record["youtube_video_id"]] = record
+        return records
+
+    def update_source_backfill(
+        self,
+        source: Source,
+        status: str,
+        page_token: str | None = None,
+        processed_video_ids: list[str] | None = None,
+        error_message: str | None = None,
+    ) -> bool:
+        if not source.source_id:
+            return False
+        now = datetime.now(timezone.utc).isoformat()
+        body: dict[str, Any] = {
+            "backfill_status": status,
+            "backfill_error": error_message,
+            "backfill_updated_at": now,
+        }
+        if status in ("running", "completed") or processed_video_ids is not None:
+            body["backfill_page_token"] = page_token
+        if processed_video_ids is not None:
+            body["backfill_pages_processed"] = source.backfill_pages_processed + 1
+            body["backfill_videos_processed"] = source.backfill_videos_processed + len(processed_video_ids)
+            if processed_video_ids:
+                body["backfill_last_video_id"] = processed_video_ids[-1]
+        if status == "completed":
+            body["backfill_completed_at"] = now
+        elif status == "queued":
+            body["backfill_completed_at"] = None
+        # A pause requested from the panel wins over a batch already in flight.
+        # If it races with ingestion, the page may be retried after resume, and
+        # the video upsert is idempotent.
+        url = f"{self.sources_url}?id=eq.{source.source_id}&backfill_status=in.(queued,running)"
+        result = self.request("PATCH", url, body=body, prefer="return=representation")
+        return bool(result)
+
+    def fail_source_backfill(self, source: Source, error_message: str) -> None:
+        if not source.source_id:
+            return
+        self.update_source_backfill(source, "failed", source.backfill_page_token, error_message=error_message)
 
     def upsert(self, rows: list[dict[str, Any]]) -> None:
         url = f"{self.table_url}?on_conflict=youtube_video_id"
@@ -484,6 +580,15 @@ def ingest_rows(
     return rows, unavailable
 
 
+MAX_BACKFILL_SOURCES_PER_RUN = 5
+BACKFILL_PAGE_SIZE = 50
+BACKFILL_STATUSES = {"queued", "running"}
+
+
+def _backfill_order(source: Source) -> tuple[str, str]:
+    return (source.backfill_updated_at or source.backfill_requested_at or "", source.source_identifier)
+
+
 def run(force: bool = False) -> int:
     youtube_key = os.environ.get("YOUTUBE_DATA_API_KEY", "")
     supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -497,16 +602,20 @@ def run(force: bool = False) -> int:
         raise ValueError("SUPABASE_URL must use HTTPS")
 
     supabase = SupabaseClient(supabase_url, secret_key)
-
-    # 1. Check settings and schedule
     settings = supabase.get_settings()
-    is_due, trigger_type = should_run(settings, force=force)
+    sources = supabase.get_active_sources()
+    if not sources and SOURCE_FILE.is_file():
+        sources = load_sources(SOURCE_FILE)
+    pending_backfills = sorted(
+        (source for source in sources if source.backfill_status in BACKFILL_STATUSES and source.source_id),
+        key=_backfill_order,
+    )
+    is_due, trigger_type = should_run(settings, force=force, backfill_pending=bool(pending_backfills))
     if not is_due:
         next_run_display = settings.get("next_run_at") if settings else "N/A"
         print(f"Ingestion skipped: Next scheduled run is at {next_run_display}.")
         return 0
 
-    # 2. Concurrency protection
     if supabase.is_run_in_progress():
         print("Another ingestion run is currently in progress. Skipping to prevent duplicate work.")
         return 0
@@ -516,43 +625,59 @@ def run(force: bool = False) -> int:
 
     run_start_utc = datetime.now(timezone.utc)
     run_id = supabase.start_run(trigger_type)
+    selected_backfills = pending_backfills[:MAX_BACKFILL_SOURCES_PER_RUN]
+    started_backfills: list[Source] = []
+    backfill_pages: dict[str, tuple[list[str], str | None]] = {}
+    daily_sync = trigger_type in ("manual", "schedule")
 
     try:
-        # 3. Load active sources from Supabase (fallback to config file if empty/unmigrated)
-        sources = supabase.get_active_sources()
-        if not sources and SOURCE_FILE.is_file():
-            sources = load_sources(SOURCE_FILE)
-
         if not sources:
             print("No active sources found; catalog remains unchanged.")
-            next_run_at = calculate_next_run(settings, run_start_utc)
+            if daily_sync:
+                next_run_at = calculate_next_run(settings, run_start_utc)
+                supabase.update_settings(run_start_utc.isoformat(), next_run_at)
             supabase.finish_run(run_id, status="success", videos_seen=0, candidates_written=0, removed_count=0)
-            supabase.update_settings(run_start_utc.isoformat(), next_run_at)
             return 0
 
         source_by_video: dict[str, Source] = {}
+        daily_candidate_ids: set[str] = set()
         youtube = YouTubeDataClient(youtube_key)
-        for source in sources:
-            video_ids = youtube.source_video_ids(source)
-            for video_id in video_ids:
-                existing = source_by_video.get(video_id)
-                if existing and existing != source:
-                    # In case a video is in multiple sources, keep first source
-                    continue
-                source_by_video[video_id] = source
 
-        existing_records = supabase.all_video_records()
-        existing_id_set = set(existing_records)
-        all_ids = sorted(existing_id_set | set(source_by_video))
+        if daily_sync:
+            for source in sources:
+                for video_id in youtube.source_video_ids(source):
+                    daily_candidate_ids.add(video_id)
+                    source_by_video.setdefault(video_id, source)
+
+        for source in selected_backfills:
+            claimed = supabase.update_source_backfill(source, "running", source.backfill_page_token)
+            if not claimed:
+                continue
+            started_backfills.append(source)
+            try:
+                page_ids, next_page_token = youtube.source_video_page(
+                    source,
+                    source.backfill_page_token,
+                    BACKFILL_PAGE_SIZE,
+                )
+                backfill_pages[source.source_id or source.source_identifier] = (page_ids, next_page_token)
+                for video_id in page_ids:
+                    source_by_video.setdefault(video_id, source)
+            except Exception as error:
+                message = str(error)[:500]
+                try:
+                    supabase.fail_source_backfill(source, message)
+                except Exception as state_error:
+                    print(f"Warning: could not persist backfill failure: {state_error}", file=sys.stderr)
+                raise
+
+        all_ids = list(source_by_video)
         if not all_ids:
-            print("Configured sources contain no videos; catalog remains empty.")
-            next_run_at = calculate_next_run(settings, run_start_utc)
-            supabase.finish_run(run_id, status="success", videos_seen=0, candidates_written=0, removed_count=0)
-            supabase.update_settings(run_start_utc.isoformat(), next_run_at)
-            return 0
+            print("Configured sources contain no videos in this batch.")
 
         default_review_status = str(settings.get("default_review_status", "pending")).strip().lower() if settings else "pending"
-        youtube_metadata = youtube.videos(all_ids)
+        existing_records = supabase.video_records(all_ids)
+        youtube_metadata = youtube.videos(all_ids) if all_ids else {}
         rows, unavailable = ingest_rows(
             youtube_metadata,
             source_by_video,
@@ -560,28 +685,56 @@ def run(force: bool = False) -> int:
             default_review_status=default_review_status,
         )
         supabase.upsert(rows)
-        for video_id in set(all_ids) - set(youtube_metadata):
-            unavailable.append(video_id)
-        for video_id in sorted(set(unavailable)):
+
+        daily_ids = daily_candidate_ids
+        # Only normal latest-N candidates are eligible for cleanup; an old
+        # playlist entry absent from the API response must never delete a row.
+        unavailable_daily = set(unavailable) & daily_ids
+        unavailable_daily.update(daily_ids - set(youtube_metadata))
+        for video_id in sorted(unavailable_daily):
             supabase.delete(video_id)
 
-        next_run_at = calculate_next_run(settings, run_start_utc)
+        for source in started_backfills:
+            page_ids, next_token = backfill_pages[source.source_id or source.source_identifier]
+            try:
+                supabase.update_source_backfill(
+                    source,
+                    "running" if next_token else "completed",
+                    next_token,
+                    processed_video_ids=page_ids,
+                )
+            except Exception as error:
+                print(f"Warning: failed to save backfill cursor for {source.display_name}: {error}", file=sys.stderr)
+                raise
+
+        if daily_sync:
+            next_run_at = calculate_next_run(settings, run_start_utc)
+            supabase.update_settings(run_start_utc.isoformat(), next_run_at)
+            print(f"Next run scheduled for {next_run_at}.")
+        else:
+            print("Backfill batch finished; the configured ingestion schedule was not changed.")
+
         supabase.finish_run(
             run_id,
             status="success",
             videos_seen=len(all_ids),
             candidates_written=len(rows),
-            removed_count=len(set(unavailable)),
+            removed_count=len(unavailable_daily),
         )
-        supabase.update_settings(run_start_utc.isoformat(), next_run_at)
-
-        print(f"Refreshed {len(rows)} videos; removed {len(set(unavailable))} unavailable or non-embeddable rows.")
-        print(f"Next run scheduled for {next_run_at}.")
+        print(
+            f"Refreshed {len(rows)} candidate videos; processed {len(started_backfills)} backfill source(s); "
+            f"removed {len(unavailable_daily)} unavailable daily candidates."
+        )
         print("New videos stay pending until editor approves them in the panel.")
         return 0
 
     except Exception as error:
-        supabase.finish_run(run_id, status="failed", error_message=str(error))
+        for source in started_backfills:
+            try:
+                supabase.fail_source_backfill(source, str(error)[:500])
+            except Exception as state_error:
+                print(f"Warning: could not persist backfill failure: {state_error}", file=sys.stderr)
+        supabase.finish_run(run_id, status="failed", error_message=str(error)[:1_000])
         raise
 
 
